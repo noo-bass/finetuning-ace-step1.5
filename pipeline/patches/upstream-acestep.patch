@@ -1,0 +1,56 @@
+diff --git a/acestep/training/dataset_builder_modules/preprocess_audio.py b/acestep/training/dataset_builder_modules/preprocess_audio.py
+index b46e8dd..6fe8112 100644
+--- a/acestep/training/dataset_builder_modules/preprocess_audio.py
++++ b/acestep/training/dataset_builder_modules/preprocess_audio.py
+@@ -1,9 +1,29 @@
++import torch
+ import torchaudio
+ 
+ 
++def _load_waveform(audio_path: str):
++    """Load raw waveform + sample rate.
++
++    torchaudio.load() has been hard-wired to TorchCodec's AudioDecoder since
++    torchaudio 2.9 (its own `backend=` parameter is accepted but silently
++    ignored), so a broken/mismatched torchcodec install (e.g. a CUDA nvrtc
++    version mismatch) leaves no fallback from the caller's side other than
++    bypassing torchaudio.load() entirely. Mirrors the fallback already used
++    in the sibling `audio_io.py` module for its own audio-loading helpers.
++    """
++    try:
++        return torchaudio.load(audio_path)
++    except Exception:
++        import soundfile as sf
++        data, sr = sf.read(audio_path, dtype="float32", always_2d=True)
++        # soundfile returns (frames, channels); torchaudio wants (channels, frames)
++        return torch.from_numpy(data.T).contiguous(), sr
++
++
+ def load_audio_stereo(audio_path: str, target_sample_rate: int, max_duration: float):
+     """Load audio, resample, convert to stereo, and truncate."""
+-    audio, sr = torchaudio.load(audio_path)
++    audio, sr = _load_waveform(audio_path)
+ 
+     if sr != target_sample_rate:
+         resampler = torchaudio.transforms.Resample(sr, target_sample_rate)
+diff --git a/acestep/training/path_safety.py b/acestep/training/path_safety.py
+index b7eccb1..205d282 100644
+--- a/acestep/training/path_safety.py
++++ b/acestep/training/path_safety.py
+@@ -30,9 +30,13 @@ def _resolve(path: str) -> str:
+ 
+ 
+ # Root directory that all user-provided paths must resolve under.
+-# Defaults to the working directory at import time.  Override via
+-# ``set_safe_root`` if needed (e.g. in tests).
+-_SAFE_ROOT: str = _resolve(os.getcwd())
++# Defaults to the working directory at import time, unless overridden via the
++# ACESTEP_SAFE_ROOT environment variable (e.g. when the cwd's realpath doesn't
++# match where mounted volumes actually resolve to -- seen with Modal Volumes,
++# which report a different canonical path under /__modal/volumes/... once
++# symlinks are resolved, even though they appear to live under the cwd).
++# Can also be overridden programmatically via ``set_safe_root`` (e.g. in tests).
++_SAFE_ROOT: str = _resolve(os.environ.get("ACESTEP_SAFE_ROOT", os.getcwd()))
+ 
+ 
+ def set_safe_root(root: str) -> None:

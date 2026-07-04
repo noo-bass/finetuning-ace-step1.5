@@ -1,0 +1,19 @@
+# Nested upstream clones (each is its own git repo, not tracked here)
+/ACE-Step-1.5/
+/Side-Step/
+
+# Source audio (commercial/copyrighted) and generated model outputs
+/songs/
+/generations/
+
+# Claude Code session state
+/.claude/
+
+# OS cruft
+.DS_Store
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+.cache/
