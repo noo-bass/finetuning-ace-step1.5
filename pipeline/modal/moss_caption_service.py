@@ -42,7 +42,10 @@ image = (
     .apt_install("git", "ffmpeg", "libsndfile1")
     .pip_install(
         "torch==2.10.0",
-        "transformers>=4.57.0",
+        "torchaudio==2.10.0",  # MOSS src/audio_io.py imports it
+        # transformers 5.x breaks 4.x-era trust_remote_code modeling files;
+        # MOSS-Music's custom code is from the 4.x era (May 2026).
+        "transformers>=4.57.0,<5",
         "accelerate>=1.12.0",
         "soundfile",
         "librosa",
