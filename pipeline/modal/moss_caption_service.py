@@ -141,7 +141,10 @@ def caption_job(src_job_id: str, dst_job_id: str, max_words: int = 110,
     raw_outputs = {}
     new_samples = []
     for i, sample in enumerate(samples):
-        audio_path = src_dir / "audio" / sample["filename"]
+        # sample["filename"] already carries the "audio/" prefix (see
+        # prep_service.py: "filename": f"audio/{audio_path.name}") --
+        # don't re-add it or the path doubles to audio/audio/....
+        audio_path = src_dir / sample["filename"]
         caption = ""
         for attempt in range(1 + max_retries):
             caption = generate_caption(audio_path, seed=42 + attempt)
