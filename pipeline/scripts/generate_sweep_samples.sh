@@ -27,20 +27,28 @@ SEED=42
 
 if [[ "$PHASE" == "launch" ]]; then
     MODAL_DIR="${3:-$(dirname "$0")/../../ACE-Step-1.5/modal}"
+    LOGDIR="${SWEEP_LOG_DIR:-/tmp}"
     cd "$MODAL_DIR"
+    # Background each client: `modal run --detach` blocks until the remote
+    # function completes (see launch_sweep.sh), so foreground loops serialize.
     for t in "${TRACKS[@]}"; do
         # Base model reference (no adapter)
         modal run --detach generate_service.py::generate --job-id "$JOB_ID" \
             --track-index "$t" --no-use-lora --seed "$SEED" \
-            --save-subdir "eval_base_t${t}"
+            --save-subdir "eval_base_t${t}" \
+            > "$LOGDIR/eval_base_t${t}.log" 2>&1 &
         for cfg in "${CONFIGS[@]}"; do
             modal run --detach generate_service.py::generate --job-id "$JOB_ID" \
                 --track-index "$t" --use-lora --seed "$SEED" \
                 --lora-subpath "${cfg}/final" \
-                --save-subdir "eval_${cfg}_t${t}"
+                --save-subdir "eval_${cfg}_t${t}" \
+                > "$LOGDIR/eval_${cfg}_t${t}.log" 2>&1 &
         done
     done
-    echo "[eval] $(( ${#TRACKS[@]} * (1 + ${#CONFIGS[@]}) )) generations detached."
+    echo "[eval] $(( ${#TRACKS[@]} * (1 + ${#CONFIGS[@]}) )) generations launched; waiting..."
+    wait
+    echo "[eval] all generations finished:"
+    grep -l "success=True" "$LOGDIR"/eval_*.log | wc -l
 elif [[ "$PHASE" == "fetch" ]]; then
     DEST="${3:-generations/$JOB_ID}"
     mkdir -p "$DEST"
