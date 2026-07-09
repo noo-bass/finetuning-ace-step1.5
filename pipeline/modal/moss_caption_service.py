@@ -49,7 +49,10 @@ image = (
         extra_index_url="https://download.pytorch.org/whl/cu128",
     )
     .pip_install(
-        "torchcodec>=0.9.1",   # torchaudio 2.10's load() delegates to it
+        # Exact-pinned: newer torchcodec wheels link against CUDA 13
+        # (libnvrtc.so.13) which the cu128 torch wheel doesn't ship.
+        # 0.9.1 is what the (working) train images resolved.
+        "torchcodec==0.9.1",   # torchaudio 2.10's load() delegates to it
         # transformers 5.x breaks 4.x-era trust_remote_code modeling files;
         # MOSS-Music's custom code is from the 4.x era (May 2026).
         "transformers>=4.57.0,<5",
@@ -109,9 +112,22 @@ def caption_job(src_job_id: str, dst_job_id: str, max_words: int = 110,
     hf_cache_vol.commit()
     print(f"[moss] model ready in {time.time()-t0:.0f}s", flush=True)
 
+    def load_audio_robust(path: str, sample_rate: int):
+        """MOSS's load_audio via torchaudio->torchcodec, with a librosa
+        fallback -- torchcodec's CUDA-lib linkage has broken twice now and
+        captioning only needs resampled mono float32 anyway."""
+        try:
+            return load_audio(path, sample_rate=sample_rate)
+        except Exception as exc:
+            print(f"[moss] load_audio failed ({type(exc).__name__}), "
+                  f"falling back to librosa: {path}", flush=True)
+            import librosa
+            wav, _ = librosa.load(path, sr=sample_rate, mono=True)
+            return torch.from_numpy(wav)
+
     def generate_caption(audio_path: Path, seed: int) -> str:
         torch.manual_seed(seed)
-        raw_audio = load_audio(str(audio_path), sample_rate=processor.config.mel_sr)
+        raw_audio = load_audio_robust(str(audio_path), sample_rate=processor.config.mel_sr)
         inputs = processor(text=CAPTION_PROMPT, audios=[raw_audio], return_tensors="pt")
         inputs["audio_input_mask"] = inputs["input_ids"] == processor.audio_token_id
         inputs = {k: v.to("cuda:0") if hasattr(v, "to") else v for k, v in inputs.items()}
