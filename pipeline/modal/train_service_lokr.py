@@ -126,16 +126,25 @@ def train_lokr(
     lokr_linear_alpha: int = 128,
     lokr_factor: int = -1,
     lokr_weight_decompose: bool = True,  # DoRA, on by default per project docs
+    output_subdir: str = "lokr_output",
+    target_modules: str = "",
 ):
-    """LoKr training run. Writes to <job_id>/lokr_output/, separate from
-    train_service.py's <job_id>/lora_output/, so this can run alongside an
-    ongoing LoRA job against the same preprocessed tensors."""
+    """LoKr training run. Writes to <job_id>/<output_subdir>/ (default
+    lokr_output/), separate from train_service.py's <job_id>/lora_output/,
+    so this can run alongside an ongoing LoRA job against the same
+    preprocessed tensors. Pass a distinct output_subdir per run when
+    sweeping several LoKr configs concurrently on one job.
+
+    target_modules: space-separated suffix list forwarded to train.py's
+    --target-modules (empty = the four attention projections). The LyCORIS
+    injection suffix-matches too, so "... gate_proj up_proj down_proj"
+    extends into the feed-forward layers."""
     import subprocess
     import sys
     from pathlib import Path
 
     dataset_dir = _ensure_preprocessed(job_id, precision)
-    output_dir = f"/root/jobs/{job_id}/lokr_output"
+    output_dir = f"/root/jobs/{job_id}/{output_subdir}"
 
     cmd = [
         sys.executable, "/root/train.py", "--yes", "fixed",
@@ -157,6 +166,8 @@ def train_lokr(
     ]
     if lokr_weight_decompose:
         cmd.append("--lokr-weight-decompose")
+    if target_modules.strip():
+        cmd += ["--target-modules", *target_modules.split()]
 
     start = time.time()
     result = subprocess.run(cmd, cwd="/root", capture_output=True, text=True, env=_SUBPROCESS_ENV)

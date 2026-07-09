@@ -146,13 +146,20 @@ def _ensure_preprocessed(job_id: str, precision: str) -> str:
 
 
 def _run_training(job_id: str, epochs: int, save_every: int, precision: str,
-                   lr: float = 1e-4, output_subdir: str = "lora_output") -> dict:
+                   lr: float = 1e-4, output_subdir: str = "lora_output",
+                   target_modules: str = "") -> dict:
     """Shared implementation for both calibrate() and train_lora().
 
     lr defaults to train.py's own default (1e-4) -- pass explicitly to
     override. output_subdir lets a differently-configured run (e.g. a
     higher-LR comparison) land in its own directory instead of clobbering
     an existing lora_output/.
+
+    target_modules is a space-separated suffix list forwarded to train.py's
+    --target-modules (empty = train.py's default: the four attention
+    projections). PEFT suffix-matches module names, so adding
+    "gate_proj up_proj down_proj" extends the adapter into the Qwen3MLP
+    feed-forward layers.
     """
     import subprocess
     import sys
@@ -174,6 +181,8 @@ def _run_training(job_id: str, epochs: int, save_every: int, precision: str,
         "--log-dir", f"{output_dir}/runs",
         "--lr", str(lr),
     ]
+    if target_modules.strip():
+        cmd += ["--target-modules", *target_modules.split()]
 
     start = time.time()
     result = subprocess.run(cmd, cwd="/root", capture_output=True, text=True, env=_SUBPROCESS_ENV)
@@ -212,9 +221,9 @@ def _run_training(job_id: str, epochs: int, save_every: int, precision: str,
     timeout=3600,
 )
 def calibrate(job_id: str, epochs: int = 20, save_every: int = 20, precision: str = "bf16",
-              lr: float = 1e-4, output_subdir: str = "lora_output"):
+              lr: float = 1e-4, output_subdir: str = "lora_output", target_modules: str = ""):
     """Short run to measure real per-epoch time + cost on A10G before committing to a full run."""
-    result = _run_training(job_id, epochs, save_every, precision, lr, output_subdir)
+    result = _run_training(job_id, epochs, save_every, precision, lr, output_subdir, target_modules)
 
     A10G_PER_SECOND = 0.000306
     if result["seconds_per_epoch"]:
@@ -243,9 +252,9 @@ def calibrate(job_id: str, epochs: int = 20, save_every: int = 20, precision: st
     timeout=6 * 3600,
 )
 def train_lora(job_id: str, epochs: int = 800, save_every: int = 25, precision: str = "bf16",
-               lr: float = 1e-4, output_subdir: str = "lora_output"):
+               lr: float = 1e-4, output_subdir: str = "lora_output", target_modules: str = ""):
     """Full training run for one job. Call with `.spawn()` from a web endpoint for async use."""
-    result = _run_training(job_id, epochs, save_every, precision, lr, output_subdir)
+    result = _run_training(job_id, epochs, save_every, precision, lr, output_subdir, target_modules)
     print(f"[train_lora] {result['epochs']} epochs in {result['elapsed_seconds']/3600:.2f}h, "
           f"returncode={result['returncode']}, adapter_produced={result['adapter_produced']}")
     if result["warning"]:
