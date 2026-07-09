@@ -41,8 +41,14 @@ image = (
     modal.Image.debian_slim(python_version="3.11")
     .apt_install("git", "ffmpeg", "libsndfile1")
     .pip_install(
-        "torch==2.10.0",
-        "torchaudio==2.10.0",  # MOSS src/audio_io.py imports it
+        # Same +cu128 pins as train_service.py, for the same reason: the
+        # default-index torch wheel's bundled CUDA libs don't match what
+        # torchcodec expects (OSError: libnvrtc.so.13).
+        "torch==2.10.0+cu128",
+        "torchaudio==2.10.0+cu128",  # MOSS src/audio_io.py imports it
+        extra_index_url="https://download.pytorch.org/whl/cu128",
+    )
+    .pip_install(
         "torchcodec>=0.9.1",   # torchaudio 2.10's load() delegates to it
         # transformers 5.x breaks 4.x-era trust_remote_code modeling files;
         # MOSS-Music's custom code is from the 4.x era (May 2026).
