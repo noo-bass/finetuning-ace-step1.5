@@ -124,6 +124,23 @@ The LoKr empty-hash filename collision is real and visible: all four t5
 LoKr configs produced byte-identical filenames, kept apart only by
 `--save-subdir`.
 
+**Round 2 (perceptual feedback loop).** User verdict on the loss winner
+(LoRA 1e-3+FFN): much bigger audible change than anything prior, but
+noticeably degraded musicality -- overcooked. Its loss trajectory agrees:
+bottomed at epoch 75 (0.781), rose to 0.832 by 100. Responses, all in
+`generations/mkgee-moss/listening/` and the listen.html round-2 table:
+- `generate_service.py` gained `--adapter-strength` (scales PEFT per-layer
+  `scaling` / LyCORIS `multiplier` post-load; fails loudly if no layers
+  scaled). Strength 0.4/0.6/0.8 generated for the winner -- this is the
+  future product "style intensity" slider.
+- Epoch-50 and epoch-75 checkpoints generated at full strength.
+- Fresh retrain at 5e-4+FFN: final 0.9056, and it ALSO bounced after epoch
+  75 (0.851 -> 0.906). With ~3 optimizer steps/epoch on 12 songs, the last
+  checkpoint is rarely the best; checkpoint selection (best-loss, not
+  final) or EMA looks structural, not a one-off. Product implication:
+  train services should save + surface the best-loss checkpoint, and
+  Side-Step's `--ema-decay` is worth adopting.
+
 Operational gotcha discovered: `modal run --detach` does NOT return at
 launch -- it stays attached streaming logs until the remote function
 finishes (detach only decouples the remote run's lifetime from the client).
