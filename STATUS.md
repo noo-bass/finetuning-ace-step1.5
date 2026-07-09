@@ -93,6 +93,43 @@ at inference time. Maps to our stack as: MOSS captions at training time +
 a prompt-rewrite layer in front of generation (building on
 `generate_service.py`'s `caption_override`). Fold into UI design.
 
+### Sweep results (mkgee-moss, MOSS captions, all runs succeeded)
+
+| Adapter | LR | Targets | Epochs | Final loss | Wall time |
+|---|---|---|---|---|---|
+| LoRA | 1e-3 | attn+FFN | 100 | **0.8320** | ~27 min |
+| LoRA | 1e-4 (anchor) | attn | 200 | 0.9179 | ~49 min |
+| LoRA | 1e-4 | attn+FFN | 200 | 0.9369 | ~49 min |
+| LoRA | 1e-3 | attn | 100 | 0.9542 | ~25 min |
+| LoKr | 1e-2 | attn | 100 | 0.9974 | ~38 min |
+| LoKr | 3e-3 | attn+FFN | 100 | 1.0246 | ~43 min |
+| LoKr | 3e-3 | attn | 100 | 1.0556 | ~39 min |
+| LoKr | 1e-3 | attn | 100 | 1.1418 | ~40 min |
+
+Loss-level reads (perceptual verdict pending listening): FFN targeting only
+pays off with a hot LR (1e-4+FFN is no better than attention-only, but
+1e-3+FFN is the best loss we've seen on this artist by a wide margin, in a
+sub-30-minute run -- squarely inside the 1-hour product envelope). The LoKr
+LR ladder is monotonic (higher LR -> lower loss) and still under-converged
+at 1e-2, consistent with the accidental lr=0.03 run being the one that
+audibly moved. LoKr trains ~20% slower per epoch than LoRA here (~23-26 vs
+~19.6 s/epoch on A10G). Anchor on MOSS captions (0.9179) lands close to the
+old-captions baseline (0.9026), so the caption swap didn't distort the loss
+surface. Real numbers: 19.6s/epoch => 100ep ~= $0.60, 200ep ~= $1.20;
+whole 8-run sweep ~$6.
+
+A/B listening set: 18 generations (8 configs + base model, tracks 0 and 5,
+seed 42) in `generations/mkgee-moss/listening/`, named `<config>_t<n>.flac`.
+The LoKr empty-hash filename collision is real and visible: all four t5
+LoKr configs produced byte-identical filenames, kept apart only by
+`--save-subdir`.
+
+Operational gotcha discovered: `modal run --detach` does NOT return at
+launch -- it stays attached streaming logs until the remote function
+finishes (detach only decouples the remote run's lifetime from the client).
+Foreground loops of it therefore serialize; both sweep and eval scripts now
+background each client and `wait`.
+
 ## Key findings this session (2026-07-06)
 
 **LoKr's "wilder"/less-subtle character vs. LoRA is very likely explained
