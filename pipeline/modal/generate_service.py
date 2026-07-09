@@ -58,7 +58,8 @@ jobs_vol = modal.Volume.from_name("acestep-lora-jobs", create_if_missing=True)
     timeout=600,
 )
 def generate(job_id: str, track_index: int = 0, use_lora: bool = True, seed: int = 42,
-             lora_subpath: str = "lora_output/final", caption_override: str = "") -> dict:
+             lora_subpath: str = "lora_output/final", caption_override: str = "",
+             save_subdir: str = "") -> dict:
     import json
     import sys
     from pathlib import Path
@@ -155,7 +156,12 @@ def generate(job_id: str, track_index: int = 0, use_lora: bool = True, seed: int
     )
     config = GenerationConfig(batch_size=1, use_random_seed=False, seeds=seed)
 
-    save_dir = f"/root/jobs/{job_id}/generations/{'lora_on' if use_lora else 'lora_off'}"
+    # Distinct save_subdir per adapter config matters when sweeping: LoKr's
+    # weights-hash is always "" (see STATUS.md), so two different LoKr
+    # checkpoints generating with the same seed/prompt produce the SAME
+    # output filename and would silently overwrite each other in a shared dir.
+    save_dir = f"/root/jobs/{job_id}/generations/" + (
+        save_subdir or ("lora_on" if use_lora else "lora_off"))
     Path(save_dir).mkdir(parents=True, exist_ok=True)
 
     result = generate_music(dit_handler, None, params, config, save_dir=save_dir)
