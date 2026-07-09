@@ -59,7 +59,7 @@ jobs_vol = modal.Volume.from_name("acestep-lora-jobs", create_if_missing=True)
 )
 def generate(job_id: str, track_index: int = 0, use_lora: bool = True, seed: int = 42,
              lora_subpath: str = "lora_output/final", caption_override: str = "",
-             save_subdir: str = "") -> dict:
+             save_subdir: str = "", adapter_strength: float = 1.0) -> dict:
     import json
     import sys
     from pathlib import Path
@@ -139,6 +139,34 @@ def generate(job_id: str, track_index: int = 0, use_lora: bool = True, seed: int
                 f"LoRA reported success but decoder shows no PEFT or LyCORIS "
                 f"wrapping, or 0 adapter params: {lora_verification}"
             )
+
+        # Adapter strength: interpolate between base-model behavior (0.0)
+        # and full adapter effect (1.0+). ACE's add_lora has no such knob,
+        # but PEFT LoraLayers expose per-adapter `scaling` (= alpha/r) we
+        # can multiply post-load; LyCORIS networks expose a `multiplier`.
+        # An overcooked adapter at strength ~0.5 often keeps its character
+        # while restoring the base model's musical prior.
+        if adapter_strength != 1.0:
+            scaled_layers = 0
+            if is_peft:
+                for module in decoder.modules():
+                    scaling = getattr(module, "scaling", None)
+                    if isinstance(scaling, dict) and "loaded_adapter" in scaling:
+                        scaling["loaded_adapter"] *= adapter_strength
+                        scaled_layers += 1
+            elif has_lycoris:
+                net = getattr(decoder, "_lycoris_net", None)
+                if net is not None and hasattr(net, "multiplier"):
+                    net.multiplier = adapter_strength
+                    scaled_layers = len(getattr(net, "loras", []) or [])
+            if scaled_layers == 0:
+                raise RuntimeError(
+                    f"adapter_strength={adapter_strength} requested but no "
+                    f"scalable adapter layers were found -- refusing to "
+                    f"silently generate at full strength"
+                )
+            print(f"[generate] adapter strength set to {adapter_strength} "
+                  f"across {scaled_layers} layers")
 
     params = GenerationParams(
         task_type="text2music",
