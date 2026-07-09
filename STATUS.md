@@ -47,7 +47,53 @@ needed (torchaudio.load() soundfile fallback when torchcodec is broken;
 |---|---|---|---|---|
 | LoRA | 1e-4 | 200 | 0.8704 | Trained on 11/13 tracks after dropping 2 with blank captions/bpm/keyscale from a failed prep pass (see below). |
 
-## Key findings this session
+## Session 2026-07-09: captions-first pivot, MOSS-Music, sweep setup
+
+**Decision: re-caption BEFORE the hyperparameter sweep, not after.** The
+sweep's dialed-in settings should be tuned against the data pipeline the
+product will actually ship, and the LM captioner is a known repeated
+failure (see below). Captions are the text conditioning the adapter trains
+against; tuning on known-bad captions optimizes for the wrong distribution.
+Trade-off accepted: old mkgee baselines are no longer strictly controlled
+comparisons, so the sweep includes an anchor run (LoRA 1e-4/200ep, default
+targets -- the exact old-baseline config) to measure the caption swap itself.
+
+**MOSS-Music (OpenMOSS, May 2026) replaces Music Flamingo as captioner
+candidate.** Apache 2.0 (commercially usable, unlike Flamingo's OneWay
+Noncommercial), ~9.05B params (~18GB bf16 -- runs on L40S; 8-bit would fit
+A10G), and also does lyrics ASR + BPM + key + structure, so it could
+eventually replace the whole whisper+LM prep stage. Self-reported SOTA on
+MusicCaps/Song Describer with an LLM judge; no independent evals yet.
+`modal/moss_caption_service.py` re-captions an existing job into a new job
+(`mkgee-e2e-test` -> `mkgee-moss`) with ONLY the caption field swapped --
+lyrics/bpm/keyscale/genre kept -- so caption quality stays a single
+controlled variable. Dependency lessons baked into its image: needs
+torchaudio + torchcodec==0.9.1 exactly (newer torchcodec wheels link CUDA 13
+/ libnvrtc.so.13, absent from cu128 torch wheels), +cu128 torch wheels, and
+transformers<5 (MOSS trust_remote_code files are 4.x-era); librosa fallback
+around their load_audio as a backstop.
+
+**Sweep infrastructure** (`pipeline/scripts/launch_sweep.sh`, 8 runs,
+~$4.20): LoKr LR ladder 1e-3/3e-3/1e-2 @100ep (bracketing between sane
+3e-4 and the accidental-but-audible 0.03), LoRA 1e-3 @100ep control
+(is LoKr's effect just the hot LR?), FFN-extended `--target-modules`
+runs testing the attention-only-cap hypothesis (the FFN blocks are
+`Qwen3MLP`: gate_proj/up_proj/down_proj, suffix-matched by both PEFT and
+LyCORIS -- upstream train.py already had the flag; our services now thread
+it through), and the anchor run. `train_service_lokr.py` gained
+`--output-subdir` so concurrent LoKr runs don't clobber; `generate_service.py`
+gained `--save-subdir` so sweep-wide A/B generation doesn't hit the
+LoKr empty-weights-hash filename collision
+(`pipeline/scripts/generate_sweep_samples.sh` batches base+8 configs x 2
+tracks at a fixed seed).
+
+**Product note (from user's prior art-gen experience):** dataset captions
+define the style; the user's prompt gets aligned to the caption vocabulary
+at inference time. Maps to our stack as: MOSS captions at training time +
+a prompt-rewrite layer in front of generation (building on
+`generate_service.py`'s `caption_override`). Fold into UI design.
+
+## Key findings this session (2026-07-06)
 
 **LoKr's "wilder"/less-subtle character vs. LoRA is very likely explained
 by a learning-rate bug, not a fundamental property of the technique.** Our
