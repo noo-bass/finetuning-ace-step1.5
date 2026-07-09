@@ -27,29 +27,47 @@ echo "[sweep] warming up preprocessing for $JOB_ID (foreground, ~5 min)..."
 modal run train_service.py::calibrate --job-id "$JOB_ID" --epochs 2 \
     --output-subdir calibrate_warmup
 
-echo "[sweep] tensors ready -- launching detached runs..."
+echo "[sweep] tensors ready -- launching runs in parallel..."
+
+# NOTE: `modal run --detach` does NOT return at launch -- it stays attached
+# streaming logs until the function completes (--detach only means the remote
+# run survives client disconnect). Run each client in the background locally
+# or the sweep executes sequentially (learned the slow way: 2 runs, ~75 min).
+LOGDIR="${SWEEP_LOG_DIR:-/tmp}"
 
 # LoRA runs
 modal run --detach train_service.py::train_lora --job-id "$JOB_ID" \
-    --epochs 200 --lr 1e-4 --output-subdir lora_lr1e-4_anchor
+    --epochs 200 --lr 1e-4 --output-subdir lora_lr1e-4_anchor \
+    > "$LOGDIR/sweep_lora_lr1e-4_anchor.log" 2>&1 &
 modal run --detach train_service.py::train_lora --job-id "$JOB_ID" \
-    --epochs 100 --lr 1e-3 --output-subdir lora_lr1e-3
+    --epochs 100 --lr 1e-3 --output-subdir lora_lr1e-3 \
+    > "$LOGDIR/sweep_lora_lr1e-3.log" 2>&1 &
 modal run --detach train_service.py::train_lora --job-id "$JOB_ID" \
     --epochs 200 --lr 1e-4 --output-subdir lora_ffn_lr1e-4 \
-    --target-modules "$FULL_TARGETS"
+    --target-modules "$FULL_TARGETS" \
+    > "$LOGDIR/sweep_lora_ffn_lr1e-4.log" 2>&1 &
 modal run --detach train_service.py::train_lora --job-id "$JOB_ID" \
     --epochs 100 --lr 1e-3 --output-subdir lora_ffn_lr1e-3 \
-    --target-modules "$FULL_TARGETS"
+    --target-modules "$FULL_TARGETS" \
+    > "$LOGDIR/sweep_lora_ffn_lr1e-3.log" 2>&1 &
 
 # LoKr runs
 modal run --detach train_service_lokr.py::train_lokr --job-id "$JOB_ID" \
-    --epochs 100 --lr 1e-3 --save-every 50 --output-subdir lokr_lr1e-3
+    --epochs 100 --lr 1e-3 --save-every 50 --output-subdir lokr_lr1e-3 \
+    > "$LOGDIR/sweep_lokr_lr1e-3.log" 2>&1 &
 modal run --detach train_service_lokr.py::train_lokr --job-id "$JOB_ID" \
-    --epochs 100 --lr 3e-3 --save-every 50 --output-subdir lokr_lr3e-3
+    --epochs 100 --lr 3e-3 --save-every 50 --output-subdir lokr_lr3e-3 \
+    > "$LOGDIR/sweep_lokr_lr3e-3.log" 2>&1 &
 modal run --detach train_service_lokr.py::train_lokr --job-id "$JOB_ID" \
-    --epochs 100 --lr 1e-2 --save-every 50 --output-subdir lokr_lr1e-2
+    --epochs 100 --lr 1e-2 --save-every 50 --output-subdir lokr_lr1e-2 \
+    > "$LOGDIR/sweep_lokr_lr1e-2.log" 2>&1 &
 modal run --detach train_service_lokr.py::train_lokr --job-id "$JOB_ID" \
     --epochs 100 --lr 3e-3 --save-every 50 --output-subdir lokr_ffn_lr3e-3 \
-    --target-modules "$FULL_TARGETS"
+    --target-modules "$FULL_TARGETS" \
+    > "$LOGDIR/sweep_lokr_ffn_lr3e-3.log" 2>&1 &
 
-echo "[sweep] 8 runs detached. Watch: modal app list / modal app logs <id>"
+echo "[sweep] 8 runs launched in parallel; logs in $LOGDIR/sweep_*.log"
+echo "[sweep] waiting for all runs to complete..."
+wait
+echo "[sweep] all runs finished:"
+tail -n 1 "$LOGDIR"/sweep_*.log
