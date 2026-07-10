@@ -173,6 +173,25 @@ finishes (detach only decouples the remote run's lifetime from the client).
 Foreground loops of it therefore serialize; both sweep and eval scripts now
 background each client and `wait`.
 
+## Curation-loop design decisions (2026-07-10, user-confirmed)
+
+- Rating UX is tiered curve-grading, not absolute yes/no: "top pick"
+  (best 2-4 of hand -> training data) / keep / pass + independent artifact
+  veto. Early rounds are relative judgments (FluxAudio-S kept top-decile of
+  its own mediocre outputs and still moved the model); absolute bars only
+  become meaningful once rounds improve.
+- Remixes (flow-edit morphs of real tracks) dealt into EVERY round, not
+  just bootstrap (user call). Dual purpose: manufactured keepers (identity
+  guaranteed by construction -- data augmentation around the 12 real
+  tracks) and a free progress metric: the round pure generations start
+  out-ranking remixes in the user's tiers is the signal the adapter has
+  arrived.
+- Wildcard slots (user idea, parked for later): reserve ~2 of 20 hand
+  slots for exploration -- off-distribution prompts, cooked-LR
+  checkpoints, weird strengths -- to discover latent-space regions closer
+  to the target than MOSS-derived captions reach. Exploration/exploitation
+  for prompt space; revisit once the basic loop demonstrably converges.
+
 ## Back pocket: preference-based training (researched 2026-07-10, not implemented)
 
 User-proposed direction: they can quickly judge if a generation is "on the
