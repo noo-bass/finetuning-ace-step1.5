@@ -75,9 +75,13 @@ SCHEMA_PROMPT = (
     "2-5 short technical vocal descriptors (or none if instrumental); 4-8 "
     "technical mixing/production descriptors; 1-3 recording-character "
     "phrases in aesthetic. Each phrase is 2-5 words of plain studio-engineer "
-    "vocabulary. No metaphors, no storytelling, no tempo, no BPM, no musical "
-    "key, no artist or song names. Output ONLY the five labeled lines, "
-    "nothing else."
+    "vocabulary -- short list items, not full sentences. No metaphors, no "
+    "storytelling, no tempo, no BPM, no musical key, no artist or song "
+    "names. All five lines are required: stay within the item counts above "
+    "on the earlier lines so you have room to write PRODUCTION and "
+    "AESTHETIC too -- do not run long on genres/instrumentation/vocals and "
+    "skip the later lines. Output ONLY the five labeled lines, nothing "
+    "else."
 )
 
 # Canonical schema key -> regex matching the label word the model might use.
@@ -265,6 +269,14 @@ def caption_job(src_job_id: str, dst_job_id: str, max_words: int = 110,
     # JSON, so a light penalty is safe here.
     temperature = 0.7 if clinical else 1.0
     repetition_penalty = 1.1 if clinical else 1.0
+    # Clinical runs kept dying with PRODUCTION/AESTHETIC dropped: the model
+    # doesn't reliably hold to the 2-5-word/4-8-item budget on the earlier
+    # lines (one run produced a 439-word GENRES+INSTRUMENTATION+VOCALS
+    # before hitting its cap), so 500 tokens -- fine for the 110-word prose
+    # mode -- runs out before reaching the later labeled lines. Give
+    # clinical mode much more headroom; max_words still clamps the
+    # rendered caption afterwards, so this doesn't affect output length.
+    max_new_tokens = 900 if clinical else 500
 
     def generate_caption(audio_path: Path, seed: int) -> str:
         torch.manual_seed(seed)
@@ -273,7 +285,7 @@ def caption_job(src_job_id: str, dst_job_id: str, max_words: int = 110,
         inputs["audio_input_mask"] = inputs["input_ids"] == processor.audio_token_id
         inputs = {k: v.to("cuda:0") if hasattr(v, "to") else v for k, v in inputs.items()}
         generated_ids = model.generate(
-            **inputs, max_new_tokens=500, do_sample=True, num_beams=1,
+            **inputs, max_new_tokens=max_new_tokens, do_sample=True, num_beams=1,
             temperature=temperature, top_p=0.8, top_k=50, use_cache=True,
             repetition_penalty=repetition_penalty,
         )
