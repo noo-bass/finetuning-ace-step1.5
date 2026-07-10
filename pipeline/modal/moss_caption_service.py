@@ -59,10 +59,44 @@ SCHEMA_PROMPT = (
     "Rules: 2-4 genre tags; 4-8 concrete sound sources in instrumentation; "
     "2-5 short technical vocal descriptors (empty list and present=false if "
     "instrumental); 4-8 technical mixing/production descriptors; 1-3 "
-    "recording-character phrases in aesthetic. Use plain studio-engineer "
+    "recording-character phrases in aesthetic. IMPORTANT: every array must "
+    "contain only short strings of 2-5 words -- no nested objects, no "
+    "key-value structures inside arrays. Use plain studio-engineer "
     "vocabulary. No metaphors, no storytelling, no tempo, no BPM, no musical "
     "key, no artist or song names."
 )
+
+
+def _repair_json(text: str) -> str:
+    """Fix the model's most common JSON malformation: Python-style set
+    literals ({"a", "b"}) -- brace groups with no colon are arrays."""
+    import re
+    pattern = re.compile(r"\{[^{}:]*\}")
+    while True:
+        repaired = pattern.sub(lambda m: "[" + m.group(0)[1:-1] + "]", text)
+        if repaired == text:
+            return text
+        text = repaired
+
+
+def _coerce_str_list(value) -> list:
+    """Flatten the model's over-structured values into a list of strings:
+    dicts contribute their keys (e.g. {"electric guitar": {...}} -> the
+    instrument names), nested lists flatten, strings pass through."""
+    out = []
+    if isinstance(value, dict):
+        out.extend(str(k) for k in value.keys())
+    elif isinstance(value, list):
+        for item in value:
+            if isinstance(item, str):
+                out.append(item)
+            elif isinstance(item, dict):
+                out.extend(str(k) for k in item.keys())
+            elif isinstance(item, list):
+                out.extend(str(x) for x in item if isinstance(x, str))
+    elif isinstance(value, str):
+        out.append(value)
+    return [s.strip() for s in out if s and s.strip()]
 
 
 def _parse_schema(text: str) -> dict:
@@ -72,13 +106,17 @@ def _parse_schema(text: str) -> dict:
     start, end = text.find("{"), text.rfind("}")
     if start == -1 or end <= start:
         raise ValueError(f"no JSON object in response: {text[:200]!r}")
-    schema = json.loads(text[start:end + 1])
-    for key in ("genres", "instrumentation", "production"):
-        if not isinstance(schema.get(key), list) or not schema[key]:
-            raise ValueError(f"schema key {key!r} missing/empty")
+    schema = json.loads(_repair_json(text[start:end + 1]))
+    for key in ("genres", "instrumentation", "production", "aesthetic"):
+        schema[key] = _coerce_str_list(schema.get(key))
     vocals = schema.get("vocals") or {}
     if not isinstance(vocals, dict):
-        raise ValueError("schema key 'vocals' not an object")
+        vocals = {"present": bool(vocals), "character": _coerce_str_list(vocals)}
+    vocals["character"] = _coerce_str_list(vocals.get("character"))
+    schema["vocals"] = vocals
+    for key in ("genres", "instrumentation", "production"):
+        if not schema[key]:
+            raise ValueError(f"schema key {key!r} missing/empty")
     return schema
 
 
