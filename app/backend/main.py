@@ -15,7 +15,7 @@ import re
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Iterator
+from typing import Iterator, Literal
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -94,8 +94,22 @@ class Rating(BaseModel):
     ts: str | None = None
 
 
+class Comparison(BaseModel):
+    a: str
+    b: str
+    winner: str
+    ts: str | None = None
+
+
 class RatingsPayload(BaseModel):
-    ratings: dict[str, Rating]
+    """Ratings doc. mode "tiers" (implied when absent) uses `ratings` only;
+    mode "pairwise" additionally carries raw `comparisons` and the derived
+    `ranking`. Tier-era clients that send just {ratings} remain valid."""
+
+    mode: Literal["tiers", "pairwise"] = "tiers"
+    ratings: dict[str, Rating] = Field(default_factory=dict)
+    comparisons: list[Comparison] = Field(default_factory=list)
+    ranking: list[str] = Field(default_factory=list)
 
 
 @app.get("/api/rounds/{name}/ratings")
@@ -111,17 +125,29 @@ def get_ratings(name: str) -> dict:
 def put_ratings(name: str, payload: RatingsPayload) -> dict:
     round_dir = _safe_round_dir(name)
     known_ids = {p.stem for p in _round_clips(round_dir)}
+
     unknown = set(payload.ratings) - known_ids
+    unknown |= set(payload.ranking) - known_ids
+    for cmp in payload.comparisons:
+        if cmp.a == cmp.b:
+            raise HTTPException(status_code=400, detail=f"comparison pairs a clip with itself: {cmp.a}")
+        if cmp.winner not in (cmp.a, cmp.b):
+            raise HTTPException(status_code=400, detail=f"winner {cmp.winner!r} is not in pair ({cmp.a}, {cmp.b})")
+        unknown |= {cmp.a, cmp.b} - known_ids
     if unknown:
         raise HTTPException(status_code=400, detail=f"unknown clip ids: {sorted(unknown)}")
 
     doc = {
         "round": name,
         "updated": datetime.now(timezone.utc).isoformat(),
+        "mode": payload.mode,
         "ratings": {
             cid: r.model_dump(exclude_none=True) for cid, r in payload.ratings.items()
         },
     }
+    if payload.mode == "pairwise" or payload.comparisons or payload.ranking:
+        doc["comparisons"] = [c.model_dump(exclude_none=True) for c in payload.comparisons]
+        doc["ranking"] = payload.ranking
     # Atomic write: temp file in the same dir, then rename.
     fd, tmp_path = tempfile.mkstemp(dir=round_dir, prefix=".ratings-", suffix=".json")
     try:

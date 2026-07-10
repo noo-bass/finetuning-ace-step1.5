@@ -82,6 +82,51 @@ export function IconAlert(props: SVGProps<SVGSVGElement>) {
   )
 }
 
+export function IconPlay(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg {...base(props)}>
+      <path d="M7 4.5v15l12-7.5z" fill="currentColor" stroke="none" />
+    </svg>
+  )
+}
+
+export function IconPause(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg {...base(props)}>
+      <path d="M8 5v14M16 5v14" strokeWidth={3} />
+    </svg>
+  )
+}
+
+export function IconUndo(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg {...base(props)}>
+      <path d="M8.5 5L4 9.5 8.5 14" />
+      <path d="M4 9.5h10a6 6 0 0 1 0 12h-4" />
+    </svg>
+  )
+}
+
+export function IconRows(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg {...base(props)}>
+      <rect x="3.5" y="4" width="17" height="6.5" rx="1.5" />
+      <rect x="3.5" y="13.5" width="17" height="6.5" rx="1.5" />
+    </svg>
+  )
+}
+
+export function IconScale(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg {...base(props)}>
+      <path d="M12 4v16M6 20h12" />
+      <path d="M4 7h16" />
+      <path d="M6 7l-2.8 6a3 3 0 0 0 5.6 0z" />
+      <path d="M18 7l-2.8 6a3 3 0 0 0 5.6 0z" />
+    </svg>
+  )
+}
+
 export function IconMusic(props: SVGProps<SVGSVGElement>) {
   return (
     <svg {...base(props)}>

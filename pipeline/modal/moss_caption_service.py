@@ -198,6 +198,89 @@ jobs_vol = modal.Volume.from_name("acestep-lora-jobs", create_if_missing=True)
 hf_cache_vol = modal.Volume.from_name("hf-hub-cache", create_if_missing=True)
 
 
+SIMILARITY_PROMPT = (
+    "You will hear two music excerpts separated by a moment of silence. "
+    "Compare PART ONE and PART TWO on production style only: instrumentation, "
+    "vocal character, recording/mixing texture, and overall sonic aesthetic. "
+    "Ignore whether they are the same composition. Answer in exactly two "
+    "lines:\n"
+    "SCORE: <integer 0-10, where 10 = plausibly the same artist and "
+    "production approach, 0 = completely different sound worlds>\n"
+    "WHY: <one short sentence>"
+)
+
+
+@app.function(
+    image=image,
+    gpu="L40S",
+    volumes={"/root/jobs": jobs_vol, "/root/hf_cache": hf_cache_vol},
+    timeout=1800,
+)
+def compare_clips(job_id: str, path_a: str, path_b: str,
+                  clip_seconds: float = 30.0) -> dict:
+    """Style-similarity judgment between two clips (job-relative paths).
+    Tries native two-audio input first; falls back to concatenating both
+    clips with 1s of silence into a single stream. Returns the raw response
+    plus a parsed score."""
+    import os
+    import re
+    import sys
+
+    os.environ["HF_HOME"] = "/root/hf_cache"
+    sys.path.insert(0, "/root/MOSS-Music")
+
+    import torch
+    from src.audio_io import load_audio
+    from src.modeling_moss_music import MossMusicModel
+    from src.processing_moss_music import MossMusicProcessor
+
+    model = MossMusicModel.from_pretrained(
+        MODEL_ID, trust_remote_code=True, torch_dtype="auto", device_map="cuda:0")
+    processor = MossMusicProcessor.from_pretrained(
+        MODEL_ID, trust_remote_code=True, enable_time_marker=True)
+
+    def load_clip(rel):
+        try:
+            wav = load_audio(f"/root/jobs/{job_id}/{rel}", sample_rate=processor.config.mel_sr)
+        except Exception:
+            import librosa
+            arr, _ = librosa.load(f"/root/jobs/{job_id}/{rel}",
+                                  sr=processor.config.mel_sr, mono=True)
+            wav = torch.from_numpy(arr)
+        wav = torch.as_tensor(wav).flatten()
+        n = int(clip_seconds * processor.config.mel_sr)
+        return wav[:n]
+
+    a, b = load_clip(path_a), load_clip(path_b)
+
+    def run(audios):
+        torch.manual_seed(42)
+        inputs = processor(text=SIMILARITY_PROMPT, audios=audios, return_tensors="pt")
+        inputs["audio_input_mask"] = inputs["input_ids"] == processor.audio_token_id
+        inputs = {k: v.to("cuda:0") if hasattr(v, "to") else v for k, v in inputs.items()}
+        out = model.generate(**inputs, max_new_tokens=120, do_sample=True, num_beams=1,
+                             temperature=0.6, top_p=0.8, top_k=50, use_cache=True)
+        return processor.decode(out[0, inputs["input_ids"].shape[1]:],
+                                skip_special_tokens=True).strip()
+
+    mode = "two-audio"
+    try:
+        raw = run([a, b])
+    except Exception as exc:
+        print(f"[moss] two-audio input failed ({type(exc).__name__}: {exc}), "
+              f"falling back to concatenation", flush=True)
+        mode = "concat"
+        gap = torch.zeros(int(1.0 * processor.config.mel_sr))
+        raw = run([torch.cat([a, gap, b])])
+
+    m = re.search(r"SCORE:\s*(\d+)", raw)
+    score = int(m.group(1)) if m else None
+    print(f"[moss] similarity({path_a[:40]}, {path_b[:40]}) mode={mode} "
+          f"score={score}\n  raw: {raw[:200]}", flush=True)
+    return {"score": score, "mode": mode, "raw": raw,
+            "a": path_a, "b": path_b}
+
+
 @app.function(
     image=image,
     gpu="L40S",
