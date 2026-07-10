@@ -1,0 +1,11 @@
+# Python
+backend/.venv/
+__pycache__/
+
+# Node
+frontend/node_modules/
+frontend/dist/
+
+# Real round data lives outside git; the committed fixture is the exception
+data/rounds/*
+!data/rounds/fixture/
