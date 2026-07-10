@@ -44,12 +44,13 @@
 <body>
 <main>
   <h1>__ROUND_NAME__ — rating session</h1>
-  <p class="lead">Two judgments per clip, gut speed: <strong>Sounds like me?</strong>
-  (the style axis — would this pass as a sketch in your world?) and
-  <strong>Artifacts</strong> (flag anything with AI garble/codec junk regardless of style —
-  flagged clips never enter training). Clip names are deliberately meaningless.
-  Keyboard: <b>space</b> play/pause current, <b>y</b>/<b>n</b> rate, <b>a</b> artifact flag,
-  <b>j</b>/<b>k</b> next/previous.</p>
+  <p class="lead">Grade on a curve, gut speed — the question is "which of these are <em>most</em>
+  you," not "are these releasable." <strong>Top pick</strong> = your best 2–4 of this hand
+  (these become training data). <strong>Keep</strong> = plausible, right direction.
+  <strong>Pass</strong> = not you. <strong>Artifacts</strong> is an independent flag for AI
+  garble/codec junk — flagged clips never enter training no matter how stylish. Clip names are
+  deliberately meaningless. Keyboard: <b>space</b> play/pause, <b>1</b> top pick, <b>2</b> keep,
+  <b>3</b> pass, <b>a</b> artifact flag, <b>j</b>/<b>k</b> next/previous.</p>
   <div id="clips"></div>
 </main>
 <div class="bar">
@@ -69,8 +70,9 @@ CLIPS.forEach((clip, idx) => {
     <header><span>${clip.id}</span><span class="hint">${idx + 1}/${CLIPS.length}</span></header>
     <audio preload="none" src="${clip.file}" controls></audio>
     <div class="controls">
-      <button data-act="yes">Sounds like me</button>
-      <button data-act="no">Not me</button>
+      <button data-act="top">Top pick</button>
+      <button data-act="keep">Keep</button>
+      <button data-act="pass">Pass</button>
       <button data-act="flag">Artifacts</button>
     </div>`;
   container.appendChild(div);
@@ -83,7 +85,7 @@ CLIPS.forEach((clip, idx) => {
 function rate(id, act) {
   const s = state[id] = state[id] || {};
   if (act === 'flag') s.artifact = !s.artifact;
-  else { s.style = act; }
+  else { s.tier = act; }
   s.ts = new Date().toISOString();
   render(id);
   updateProgress();
@@ -92,16 +94,19 @@ function rate(id, act) {
 function render(id) {
   const div = document.getElementById('clip-' + id);
   const s = state[id] || {};
-  const [yes, no, flag] = div.querySelectorAll('button');
-  yes.className = s.style === 'yes' ? 'active-yes' : '';
-  no.className = s.style === 'no' ? 'active-no' : '';
+  const [top, keep, pass, flag] = div.querySelectorAll('button');
+  top.className = s.tier === 'top' ? 'active-yes' : '';
+  keep.className = s.tier === 'keep' ? 'active-yes' : '';
+  pass.className = s.tier === 'pass' ? 'active-no' : '';
   flag.className = s.artifact ? 'active-flag' : '';
-  div.classList.toggle('done', !!s.style);
+  div.classList.toggle('done', !!s.tier);
 }
 
 function updateProgress() {
-  const done = Object.values(state).filter(s => s.style).length;
-  document.getElementById('progress').textContent = done + ' / ' + CLIPS.length + ' rated';
+  const done = Object.values(state).filter(s => s.tier).length;
+  const tops = Object.values(state).filter(s => s.tier === 'top').length;
+  document.getElementById('progress').textContent =
+    done + ' / ' + CLIPS.length + ' rated (' + tops + ' top picks)';
 }
 
 document.addEventListener('keydown', e => {
@@ -109,8 +114,9 @@ document.addEventListener('keydown', e => {
   const clip = CLIPS[current]; if (!clip) return;
   const audio = document.getElementById('clip-' + clip.id).querySelector('audio');
   if (e.key === ' ') { e.preventDefault(); audio.paused ? audio.play() : audio.pause(); }
-  else if (e.key === 'y') rate(clip.id, 'yes');
-  else if (e.key === 'n') rate(clip.id, 'no');
+  else if (e.key === '1') rate(clip.id, 'top');
+  else if (e.key === '2') rate(clip.id, 'keep');
+  else if (e.key === '3') rate(clip.id, 'pass');
   else if (e.key === 'a') rate(clip.id, 'flag');
   else if (e.key === 'j' || e.key === 'k') {
     audio.pause();
