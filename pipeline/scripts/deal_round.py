@@ -34,6 +34,11 @@ def main():
     ap.add_argument("--redeal-n", type=int, default=5)
     ap.add_argument("--seed", type=int, default=1234,
                     help="shuffle seed, recorded in mapping.json for reproducibility")
+    ap.add_argument("--excerpt-seconds", type=float, default=0,
+                    help="deal a short excerpt for rating (0 = full clip); "
+                         "mapping.json keeps the FULL clip path -- rate short, train long")
+    ap.add_argument("--excerpt-start", type=float, default=12,
+                    help="excerpt start offset in seconds (skip intros)")
     args = ap.parse_args()
 
     manifest = json.loads(Path(args.manifest).read_text())
@@ -58,13 +63,22 @@ def main():
     round_dir = Path(args.round_dir)
     (round_dir / "audio").mkdir(parents=True, exist_ok=True)
 
-    mapping = {"seed": args.seed, "clips": {}}
+    mapping = {"seed": args.seed, "excerpt_seconds": args.excerpt_seconds, "clips": {}}
     page_clips = []
     for i, clip in enumerate(clips, 1):
         blind = f"c{i:02d}"
         src = Path(clip["path"])
         dst = round_dir / "audio" / f"{blind}{src.suffix}"
-        shutil.copy2(src, dst)
+        if args.excerpt_seconds > 0:
+            # rate short, train long: the dealt audio is an excerpt; the
+            # mapping keeps the full-clip path for the training mix
+            import subprocess
+            subprocess.run(
+                ["ffmpeg", "-v", "quiet", "-y", "-ss", str(args.excerpt_start),
+                 "-i", str(src), "-t", str(args.excerpt_seconds), "-c:a", "flac", str(dst)],
+                check=True)
+        else:
+            shutil.copy2(src, dst)
         mapping["clips"][blind] = clip
         page_clips.append({"id": blind, "file": f"audio/{blind}{src.suffix}"})
 
