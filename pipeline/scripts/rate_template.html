@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Rate — __ROUND_NAME__</title>
+<style>
+  :root {
+    --bg: #ffffff; --fg: #1a1a1e; --muted: #6b6b76; --line: #e4e4ea;
+    --card: #f7f7f9; --accent: #3b5bdb; --yes: #2b8a3e; --no: #c92a2a; --flag: #e8590c;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #131318; --fg: #ececf1; --muted: #9a9aa6; --line: #2a2a33;
+      --card: #1c1c24; --accent: #748ffc; --yes: #69db7c; --no: #ff8787; --flag: #ffa94d;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 2rem 1rem 6rem; background: var(--bg); color: var(--fg);
+         font: 16px/1.5 -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; }
+  main { max-width: 720px; margin: 0 auto; }
+  h1 { font-size: 1.3rem; }
+  p.lead { color: var(--muted); }
+  .clip { background: var(--card); border: 1px solid var(--line); border-radius: 10px;
+          padding: 1rem; margin-bottom: 1rem; }
+  .clip.done { opacity: .55; }
+  .clip header { display: flex; justify-content: space-between; align-items: center;
+                 margin-bottom: .5rem; font-weight: 600; }
+  audio { width: 100%; height: 36px; margin-bottom: .6rem; }
+  .controls { display: flex; gap: .5rem; flex-wrap: wrap; }
+  button { border: 1px solid var(--line); background: var(--bg); color: var(--fg);
+           border-radius: 8px; padding: .45rem .9rem; cursor: pointer; font-size: .9rem; }
+  button.active-yes { background: var(--yes); color: #fff; border-color: var(--yes); }
+  button.active-no { background: var(--no); color: #fff; border-color: var(--no); }
+  button.active-flag { background: var(--flag); color: #fff; border-color: var(--flag); }
+  .bar { position: fixed; bottom: 0; left: 0; right: 0; background: var(--card);
+         border-top: 1px solid var(--line); padding: .75rem 1rem;
+         display: flex; justify-content: space-between; align-items: center; }
+  .bar button.export { background: var(--accent); color: #fff; border-color: var(--accent);
+                       font-weight: 600; }
+  .hint { color: var(--muted); font-size: .85rem; }
+</style>
+</head>
+<body>
+<main>
+  <h1>__ROUND_NAME__ — rating session</h1>
+  <p class="lead">Two judgments per clip, gut speed: <strong>Sounds like me?</strong>
+  (the style axis — would this pass as a sketch in your world?) and
+  <strong>Artifacts</strong> (flag anything with AI garble/codec junk regardless of style —
+  flagged clips never enter training). Clip names are deliberately meaningless.
+  Keyboard: <b>space</b> play/pause current, <b>y</b>/<b>n</b> rate, <b>a</b> artifact flag,
+  <b>j</b>/<b>k</b> next/previous.</p>
+  <div id="clips"></div>
+</main>
+<div class="bar">
+  <span class="hint" id="progress"></span>
+  <button class="export" id="export">Export ratings</button>
+</div>
+<script>
+const CLIPS = __CLIPS_JSON__;
+const state = {};
+const container = document.getElementById('clips');
+let current = 0;
+
+CLIPS.forEach((clip, idx) => {
+  const div = document.createElement('div');
+  div.className = 'clip'; div.id = 'clip-' + clip.id;
+  div.innerHTML = `
+    <header><span>${clip.id}</span><span class="hint">${idx + 1}/${CLIPS.length}</span></header>
+    <audio preload="none" src="${clip.file}" controls></audio>
+    <div class="controls">
+      <button data-act="yes">Sounds like me</button>
+      <button data-act="no">Not me</button>
+      <button data-act="flag">Artifacts</button>
+    </div>`;
+  container.appendChild(div);
+  div.querySelectorAll('button').forEach(btn => {
+    btn.addEventListener('click', () => rate(clip.id, btn.dataset.act));
+  });
+  div.querySelector('audio').addEventListener('play', () => { current = idx; });
+});
+
+function rate(id, act) {
+  const s = state[id] = state[id] || {};
+  if (act === 'flag') s.artifact = !s.artifact;
+  else { s.style = act; }
+  s.ts = new Date().toISOString();
+  render(id);
+  updateProgress();
+}
+
+function render(id) {
+  const div = document.getElementById('clip-' + id);
+  const s = state[id] || {};
+  const [yes, no, flag] = div.querySelectorAll('button');
+  yes.className = s.style === 'yes' ? 'active-yes' : '';
+  no.className = s.style === 'no' ? 'active-no' : '';
+  flag.className = s.artifact ? 'active-flag' : '';
+  div.classList.toggle('done', !!s.style);
+}
+
+function updateProgress() {
+  const done = Object.values(state).filter(s => s.style).length;
+  document.getElementById('progress').textContent = done + ' / ' + CLIPS.length + ' rated';
+}
+
+document.addEventListener('keydown', e => {
+  if (e.target.tagName === 'BUTTON' || e.target.tagName === 'AUDIO') e.target.blur();
+  const clip = CLIPS[current]; if (!clip) return;
+  const audio = document.getElementById('clip-' + clip.id).querySelector('audio');
+  if (e.key === ' ') { e.preventDefault(); audio.paused ? audio.play() : audio.pause(); }
+  else if (e.key === 'y') rate(clip.id, 'yes');
+  else if (e.key === 'n') rate(clip.id, 'no');
+  else if (e.key === 'a') rate(clip.id, 'flag');
+  else if (e.key === 'j' || e.key === 'k') {
+    audio.pause();
+    current = Math.min(Math.max(current + (e.key === 'j' ? 1 : -1), 0), CLIPS.length - 1);
+    const next = document.getElementById('clip-' + CLIPS[current].id);
+    next.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    next.querySelector('audio').play();
+  }
+});
+
+document.getElementById('export').addEventListener('click', () => {
+  const unrated = CLIPS.filter(c => !(state[c.id] || {}).style).map(c => c.id);
+  if (unrated.length && !confirm('Unrated: ' + unrated.join(', ') + '. Export anyway?')) return;
+  const blob = new Blob([JSON.stringify({ round: '__ROUND_NAME__',
+    exported: new Date().toISOString(), ratings: state }, null, 2)],
+    { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'ratings.json';
+  a.click();
+});
+updateProgress();
+</script>
+</body>
+</html>
