@@ -60,7 +60,17 @@ jobs_vol = modal.Volume.from_name("acestep-lora-jobs", create_if_missing=True)
 def generate(job_id: str, track_index: int = 0, use_lora: bool = True, seed: int = 42,
              lora_subpath: str = "lora_output/final", caption_override: str = "",
              save_subdir: str = "", adapter_strength: float = 1.0,
-             adapter_mask_steps: int = 0) -> dict:
+             adapter_mask_steps: int = 0, task_type: str = "text2music",
+             src_audio: str = "", reference_audio: str = "",
+             flow_edit_morph: bool = False, flow_edit_n_min: float = 0.0,
+             flow_edit_n_max: float = 1.0, flow_edit_source_caption: str = "",
+             flow_edit_source_lyrics: str = "") -> dict:
+    """task_type: text2music | cover | repaint | lego | extract | complete.
+    src_audio / reference_audio are job-relative paths on the volume (e.g.
+    "audio/Mk.gee - Alesis ... .wav"). flow_edit_morph steers text2music
+    with a source track; n_min/n_max bound which portion of the denoising
+    trajectory is re-generated -- effectively a transform-strength window
+    (low n_max = gentle recolor, full window = heavy reimagining)."""
     import json
     import sys
     from pathlib import Path
@@ -207,8 +217,24 @@ def generate(job_id: str, track_index: int = 0, use_lora: bool = True, seed: int
             print(f"[generate] adapter masked for first {adapter_mask_steps} "
                   f"decoder calls")
 
+    audio_kwargs = {}
+    if src_audio:
+        audio_kwargs["src_audio"] = f"/root/jobs/{job_id}/{src_audio}"
+    if reference_audio:
+        audio_kwargs["reference_audio"] = f"/root/jobs/{job_id}/{reference_audio}"
+    if flow_edit_morph:
+        audio_kwargs.update(
+            flow_edit_morph=True,
+            flow_edit_n_min=flow_edit_n_min,
+            flow_edit_n_max=flow_edit_n_max,
+            flow_edit_source_caption=flow_edit_source_caption,
+            flow_edit_source_lyrics=flow_edit_source_lyrics,
+        )
+    if audio_kwargs:
+        print(f"[generate] audio conditioning: task={task_type} {audio_kwargs}")
+
     params = GenerationParams(
-        task_type="text2music",
+        task_type=task_type,
         caption=sample["caption"],
         lyrics=sample["lyrics"],
         instrumental=sample.get("is_instrumental", False),
@@ -220,6 +246,7 @@ def generate(job_id: str, track_index: int = 0, use_lora: bool = True, seed: int
         inference_steps=8,   # turbo default
         shift=3.0,           # turbo default
         seed=seed,
+        **audio_kwargs,
     )
     config = GenerationConfig(batch_size=1, use_random_seed=False, seeds=seed)
 
