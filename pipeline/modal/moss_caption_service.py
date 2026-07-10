@@ -37,83 +37,91 @@ CAPTION_PROMPT = (
     "or any artist or song names."
 )
 
-# Clinical/structured mode: strict JSON out, prose rendered by code. Flowery
-# free-text captions ("luminous yet wistful atmosphere") proved both hard to
-# audit and far from ACE-Step's taggy native conditioning register; schema
-# fields leave no room for poetry, and downstream the per-field lists enable
-# programmatic cross-track aggregation (style-prompt derivation with
+# Clinical/structured mode: labeled-line text out, prose rendered by code.
+# Flowery free-text captions ("luminous yet wistful atmosphere") proved both
+# hard to audit and far from ACE-Step's taggy native conditioning register;
+# schema fields leave no room for poetry, and downstream the per-field lists
+# enable programmatic cross-track aggregation (style-prompt derivation with
 # evidence counts).
+#
+# JSON was tried first and abandoned: at temp 0.3 the model loops
+# ("synthwave", "retrowave", ...) and never closes the object; at temp 0.6+
+# repetition_penalty the penalty avoids repeating JSON's structural tokens
+# (quotes/braces/colons) and mangles the syntax itself (e.g. '"vocals"'
+# becomes '" v o c e l s "'). repetition_penalty is fundamentally
+# incompatible with a format built from repeated punctuation. Semicolon-
+# separated labeled lines carry almost no repeated structural punctuation,
+# so they tolerate both sampling noise and repetition_penalty far better.
 SCHEMA_PROMPT = (
-    "Listen to this song and describe it as a single JSON object with keys "
-    "genres, instrumentation, vocals, production, aesthetic. Output ONLY the "
-    "JSON -- no markdown fences, no commentary. Here is an example of the "
-    "required format describing a DIFFERENT song (a techno track -- do NOT "
-    "copy its content, describe THIS song):\n"
-    '{"genres": ["techno", "minimal techno"], '
-    '"instrumentation": ["analog kick drum", "modular synth sequence", '
-    '"hi-hat machine", "sub bass"], '
-    '"vocals": {"present": false, "character": []}, '
-    '"production": ["heavy sidechain compression", "narrow mono low end", '
-    '"long delay tails", "club-oriented loudness"], '
-    '"aesthetic": ["dark warehouse"]}\n'
+    "Listen to this song and describe it using EXACTLY five labeled lines "
+    "in this format, one line per label, with short phrases separated by "
+    "semicolons. Do not use JSON, markdown, or any other format -- plain "
+    "text lines only.\n"
+    "GENRES: <phrase>; <phrase>\n"
+    "INSTRUMENTATION: <phrase>; <phrase>; ...\n"
+    "VOCALS: <phrase>; <phrase>; ...  (or the single word none if instrumental)\n"
+    "PRODUCTION: <phrase>; <phrase>; ...\n"
+    "AESTHETIC: <phrase>; <phrase>; ...\n"
+    "Here is an example describing a DIFFERENT song (a techno track -- do "
+    "NOT copy its content, describe THIS song):\n"
+    "GENRES: techno; minimal techno\n"
+    "INSTRUMENTATION: analog kick drum; modular synth sequence; hi-hat "
+    "machine; sub bass\n"
+    "VOCALS: none\n"
+    "PRODUCTION: heavy sidechain compression; narrow mono low end; long "
+    "delay tails; club-oriented loudness\n"
+    "AESTHETIC: dark warehouse\n"
     "Rules: 2-4 genre tags; 4-8 concrete sound sources in instrumentation; "
-    "2-5 short technical vocal descriptors (empty list and present=false if "
-    "instrumental); 4-8 technical mixing/production descriptors; 1-3 "
-    "recording-character phrases in aesthetic. IMPORTANT: every array must "
-    "contain only short strings of 2-5 words -- no nested objects, no "
-    "key-value structures inside arrays. Use plain studio-engineer "
+    "2-5 short technical vocal descriptors (or none if instrumental); 4-8 "
+    "technical mixing/production descriptors; 1-3 recording-character "
+    "phrases in aesthetic. Each phrase is 2-5 words of plain studio-engineer "
     "vocabulary. No metaphors, no storytelling, no tempo, no BPM, no musical "
-    "key, no artist or song names."
+    "key, no artist or song names. Output ONLY the five labeled lines, "
+    "nothing else."
 )
 
+_SCHEMA_LABELS = ("GENRES", "INSTRUMENTATION", "VOCALS", "PRODUCTION", "AESTHETIC")
 
-def _repair_json(text: str) -> str:
-    """Fix the model's most common JSON malformation: Python-style set
-    literals ({"a", "b"}) -- brace groups with no colon are arrays."""
+
+def _split_phrases(text: str) -> list:
+    """Split a labeled line's value into short phrases, tolerating the
+    model falling back to newline/bullet/markdown separators instead of
+    semicolons."""
     import re
-    pattern = re.compile(r"\{[^{}:]*\}")
-    while True:
-        repaired = pattern.sub(lambda m: "[" + m.group(0)[1:-1] + "]", text)
-        if repaired == text:
-            return text
-        text = repaired
-
-
-def _coerce_str_list(value) -> list:
-    """Flatten the model's over-structured values into a list of strings:
-    dicts contribute their keys (e.g. {"electric guitar": {...}} -> the
-    instrument names), nested lists flatten, strings pass through."""
-    out = []
-    if isinstance(value, dict):
-        out.extend(str(k) for k in value.keys())
-    elif isinstance(value, list):
-        for item in value:
-            if isinstance(item, str):
-                out.append(item)
-            elif isinstance(item, dict):
-                out.extend(str(k) for k in item.keys())
-            elif isinstance(item, list):
-                out.extend(str(x) for x in item if isinstance(x, str))
-    elif isinstance(value, str):
-        out.append(value)
-    return [s.strip() for s in out if s and s.strip()]
+    text = re.sub(r"^\s*[-*]\s*", "", text)
+    text = re.sub(r"\n\s*[-*]\s*", "; ", text)
+    parts = re.split(r"[;\n]", text)
+    parts = [p.strip(" .\t*#") for p in parts]
+    return [p for p in parts if p and p.lower() not in ("none", "n/a", "instrumental")]
 
 
 def _parse_schema(text: str) -> dict:
-    """Extract and validate the JSON object from a model response.
+    """Extract and validate the five labeled lines from a model response.
+    Tolerates markdown bold/bullets around labels (e.g. "**GENRES:**").
     Raises ValueError on anything unusable."""
-    import json
-    start, end = text.find("{"), text.rfind("}")
-    if start == -1 or end <= start:
-        raise ValueError(f"no JSON object in response: {text[:200]!r}")
-    schema = json.loads(_repair_json(text[start:end + 1]))
-    for key in ("genres", "instrumentation", "production", "aesthetic"):
-        schema[key] = _coerce_str_list(schema.get(key))
-    vocals = schema.get("vocals") or {}
-    if not isinstance(vocals, dict):
-        vocals = {"present": bool(vocals), "character": _coerce_str_list(vocals)}
-    vocals["character"] = _coerce_str_list(vocals.get("character"))
-    schema["vocals"] = vocals
+    import re
+    pattern = re.compile(r"(?im)^[\s\-*#>]*(" + "|".join(_SCHEMA_LABELS) + r")[\s*]*:[\s*]*")
+    matches = list(pattern.finditer(text))
+    found = {m.group(1).upper() for m in matches}
+    missing = [label for label in _SCHEMA_LABELS if label not in found]
+    if missing:
+        raise ValueError(f"missing labeled lines {missing}: {text[:200]!r}")
+    fields = {}
+    for idx, m in enumerate(matches):
+        label = m.group(1).upper()
+        start = m.end()
+        end = matches[idx + 1].start() if idx + 1 < len(matches) else len(text)
+        fields[label] = text[start:end].strip()
+
+    vocals_raw = fields["VOCALS"]
+    vocals_chars = _split_phrases(vocals_raw)
+    schema = {
+        "genres": _split_phrases(fields["GENRES"]),
+        "instrumentation": _split_phrases(fields["INSTRUMENTATION"]),
+        "vocals": {"present": bool(vocals_chars), "character": vocals_chars},
+        "production": _split_phrases(fields["PRODUCTION"]),
+        "aesthetic": _split_phrases(fields["AESTHETIC"]),
+    }
     for key in ("genres", "instrumentation", "production"):
         if not schema[key]:
             raise ValueError(f"schema key {key!r} missing/empty")
@@ -177,8 +185,9 @@ def caption_job(src_job_id: str, dst_job_id: str, max_words: int = 110,
     """Caption every sample of <src_job_id> and write <dst_job_id> with
     swapped captions. Idempotent-ish: re-running overwrites dst outputs.
 
-    clinical=True switches to schema mode: MOSS returns strict JSON at
-    low temperature, the caption is rendered from it by code, and the
+    clinical=True switches to schema mode: MOSS returns semicolon-separated
+    labeled lines (GENRES:/INSTRUMENTATION:/VOCALS:/PRODUCTION:/AESTHETIC:),
+    the caption is rendered from the parsed schema by code, and the
     per-track schemas are saved to moss_schemas.json for downstream
     aggregation (style-prompt derivation)."""
     import json
@@ -228,12 +237,14 @@ def caption_job(src_job_id: str, dst_job_id: str, max_words: int = 110,
             return torch.from_numpy(wav)
 
     prompt = SCHEMA_PROMPT if clinical else CAPTION_PROMPT
-    # Clinical mode temperature is a squeeze: 1.0 (infer.py's default)
-    # produces florid prose and JSON drift, but 0.3 degenerates into
-    # repetition loops ("synthwave", "retrowave", ... forever) that never
-    # close the JSON. 0.6 + repetition_penalty is the working middle.
-    temperature = 0.6 if clinical else 1.0
-    repetition_penalty = 1.15 if clinical else 1.0
+    # Clinical mode: moderate temperature + a light repetition_penalty. Low
+    # temp (0.3) degenerated into word-repetition loops; a heavier penalty
+    # (1.15) was fine for suppressing that but also suppressed JSON's
+    # necessarily-repeated punctuation, corrupting the format itself. The
+    # labeled-line format has far less repeated structural punctuation than
+    # JSON, so a light penalty is safe here.
+    temperature = 0.7 if clinical else 1.0
+    repetition_penalty = 1.1 if clinical else 1.0
 
     def generate_caption(audio_path: Path, seed: int) -> str:
         torch.manual_seed(seed)
