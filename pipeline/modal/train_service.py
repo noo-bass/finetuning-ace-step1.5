@@ -147,7 +147,8 @@ def _ensure_preprocessed(job_id: str, precision: str) -> str:
 
 def _run_training(job_id: str, epochs: int, save_every: int, precision: str,
                    lr: float = 1e-4, output_subdir: str = "lora_output",
-                   target_modules: str = "", rank: int = 0, alpha: int = 0) -> dict:
+                   target_modules: str = "", rank: int = 0, alpha: int = 0,
+                   resume_from: str = "") -> dict:
     """Shared implementation for both calibrate() and train_lora().
 
     lr defaults to train.py's own default (1e-4) -- pass explicitly to
@@ -190,6 +191,12 @@ def _run_training(job_id: str, epochs: int, save_every: int, precision: str,
         cmd += ["--rank", str(rank)]
     if alpha > 0:
         cmd += ["--alpha", str(alpha)]
+    # resume_from: job-relative checkpoint dir (e.g. "lora_db_r16/checkpoints/
+    # epoch_150_loss_0.7568"). Restores adapter + optimizer + scheduler state
+    # and continues from the saved epoch toward the (new) --epochs target --
+    # the pay-as-you-go "train another N epochs, then listen" flow.
+    if resume_from.strip():
+        cmd += ["--resume-from", f"/root/jobs/{job_id}/{resume_from.strip()}"]
 
     start = time.time()
     result = subprocess.run(cmd, cwd="/root", capture_output=True, text=True, env=_SUBPROCESS_ENV)
@@ -265,6 +272,31 @@ def train_lora(job_id: str, epochs: int = 800, save_every: int = 25, precision: 
     result = _run_training(job_id, epochs, save_every, precision, lr, output_subdir, target_modules,
                            rank, alpha)
     print(f"[train_lora] {result['epochs']} epochs in {result['elapsed_seconds']/3600:.2f}h, "
+          f"returncode={result['returncode']}, adapter_produced={result['adapter_produced']}")
+    if result["warning"]:
+        print(f"[WARNING] {result['warning']}")
+    if result["returncode"] != 0 or not result["adapter_produced"]:
+        print("STDOUT TAIL:\n", result["stdout_tail"])
+        print("STDERR TAIL:\n", result["stderr_tail"])
+    return result
+
+
+@app.function(
+    image=image,
+    gpu="H100",
+    volumes={"/root/checkpoints": checkpoints_vol, "/root/jobs": jobs_vol},
+    timeout=6 * 3600,
+)
+def train_lora_h100(job_id: str, epochs: int = 500, save_every: int = 25, precision: str = "bf16",
+                    lr: float = 1e-4, output_subdir: str = "lora_output", target_modules: str = "",
+                    rank: int = 0, alpha: int = 0, resume_from: str = ""):
+    """train_lora on an H100: ~4x the wall-clock speed of A10G at ~4x the
+    hourly rate -- near cost-neutral per epoch, but doc-scale runs (500-800
+    epochs) finish in tens of minutes instead of hours. Wait time is the
+    product's UX bottleneck, not $/epoch."""
+    result = _run_training(job_id, epochs, save_every, precision, lr, output_subdir, target_modules,
+                           rank, alpha, resume_from)
+    print(f"[train_lora_h100] {result['epochs']} epochs in {result['elapsed_seconds']/3600:.2f}h, "
           f"returncode={result['returncode']}, adapter_produced={result['adapter_produced']}")
     if result["warning"]:
         print(f"[WARNING] {result['warning']}")
