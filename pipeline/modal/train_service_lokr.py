@@ -110,13 +110,7 @@ def _ensure_preprocessed(job_id: str, precision: str) -> str:
     return tensor_dir
 
 
-@app.function(
-    image=image,
-    gpu="A10G",
-    volumes={"/root/checkpoints": checkpoints_vol, "/root/jobs": jobs_vol},
-    timeout=6 * 3600,
-)
-def train_lokr(
+def _run_lokr_training(
     job_id: str,
     epochs: int = 500,
     save_every: int = 200,
@@ -128,6 +122,7 @@ def train_lokr(
     lokr_weight_decompose: bool = True,  # DoRA, on by default per project docs
     output_subdir: str = "lokr_output",
     target_modules: str = "",
+    resume_from: str = "",
 ):
     """LoKr training run. Writes to <job_id>/<output_subdir>/ (default
     lokr_output/), separate from train_service.py's <job_id>/lora_output/,
@@ -168,6 +163,8 @@ def train_lokr(
         cmd.append("--lokr-weight-decompose")
     if target_modules.strip():
         cmd += ["--target-modules", *target_modules.split()]
+    if resume_from.strip():
+        cmd += ["--resume-from", f"/root/jobs/{job_id}/{resume_from.strip()}"]
 
     start = time.time()
     result = subprocess.run(cmd, cwd="/root", capture_output=True, text=True, env=_SUBPROCESS_ENV)
@@ -200,3 +197,36 @@ def train_lokr(
         print("STDERR TAIL:\n", result.stderr[-4000:])
 
     return result_dict
+
+
+@app.function(
+    image=image,
+    gpu="A10G",
+    volumes={"/root/checkpoints": checkpoints_vol, "/root/jobs": jobs_vol},
+    timeout=6 * 3600,
+)
+def train_lokr(job_id: str, epochs: int = 500, save_every: int = 200, precision: str = "bf16",
+               lr: float = 0.03, lokr_linear_dim: int = 64, lokr_linear_alpha: int = 128,
+               lokr_factor: int = -1, lokr_weight_decompose: bool = True,
+               output_subdir: str = "lokr_output", target_modules: str = "",
+               resume_from: str = ""):
+    return _run_lokr_training(job_id, epochs, save_every, precision, lr, lokr_linear_dim,
+                              lokr_linear_alpha, lokr_factor, lokr_weight_decompose,
+                              output_subdir, target_modules, resume_from)
+
+
+@app.function(
+    image=image,
+    gpu="H100",
+    volumes={"/root/checkpoints": checkpoints_vol, "/root/jobs": jobs_vol},
+    timeout=6 * 3600,
+)
+def train_lokr_h100(job_id: str, epochs: int = 500, save_every: int = 200, precision: str = "bf16",
+                    lr: float = 0.03, lokr_linear_dim: int = 64, lokr_linear_alpha: int = 128,
+                    lokr_factor: int = -1, lokr_weight_decompose: bool = True,
+                    output_subdir: str = "lokr_output", target_modules: str = "",
+                    resume_from: str = ""):
+    """Same run on H100: ~4x A10G wall-clock at similar per-epoch cost."""
+    return _run_lokr_training(job_id, epochs, save_every, precision, lr, lokr_linear_dim,
+                              lokr_linear_alpha, lokr_factor, lokr_weight_decompose,
+                              output_subdir, target_modules, resume_from)
