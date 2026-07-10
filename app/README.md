@@ -51,16 +51,34 @@ python3 pipeline/scripts/deal_round.py \
 Refresh the app; the round appears in the rail. Ratings autosave to
 `app/data/rounds/<roundName>/ratings.json`.
 
+## Rating modes
+
+The round screen has two modes (the choice persists in the ratings doc):
+
+- **Tiers** — one card per clip; Top pick / Keep / Pass plus an independent
+  Artifacts flag. Best when clips already spread across quality levels.
+- **Compare** — A/B forced choice for early rounds where absolute tiers
+  saturate. A deterministic Elo pairing engine (K=32) picks each next pair
+  adaptively (fewest-compared clip vs its closest-scored rival, unplayed
+  pairs first). After ~2n comparisons the ranking is called stable; finish
+  anytime to see the ranked list with the top 4 highlighted as keepers.
+  Raw comparisons and the derived ranking both autosave.
+
 ## API
 
 - `GET  /api/rounds` — `[{name, clipCount, rated}]`
 - `GET  /api/rounds/{name}` — `{name, clips: [{id, url}]}` (blind ids only)
 - `GET  /api/rounds/{name}/ratings` — saved ratings doc or `{}`
 - `PUT  /api/rounds/{name}/ratings` — atomically persists
-  `{round, updated, ratings: {blindId: {tier, artifact, ts}}}`
+  `{round, updated, mode, ratings: {blindId: {tier, artifact, ts}},
+  comparisons: [{a, b, winner, ts}], ranking: [blindId...]}` —
+  `mode` defaults to `"tiers"`; tier-era docs without it stay valid
 - `GET  /api/audio/{name}/{file}` — audio stream with HTTP Range support
 
 ## Keyboard
 
-`space` play/pause current clip, `1`/`2`/`3` top/keep/pass, `a` artifact
-flag, `j`/`k` next/previous card (scrolls into view and autoplays).
+Tiers: `space` play/pause current clip, `1`/`2`/`3` top/keep/pass, `a`
+artifact flag, `j`/`k` next/previous card (scrolls into view and autoplays).
+
+Compare: `left`/`right` arrow picks the winner, `space` toggles playback
+between A and B, `u` undoes the last comparison.
