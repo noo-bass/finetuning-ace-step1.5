@@ -173,6 +173,43 @@ finishes (detach only decouples the remote run's lifetime from the client).
 Foreground loops of it therefore serialize; both sweep and eval scripts now
 background each client and `wait`.
 
+## Back pocket: preference-based training (researched 2026-07-10, not implemented)
+
+User-proposed direction: they can quickly judge if a generation is "on the
+right lines," so rating batches to steer the model is acceptable UX.
+Literature sweep findings (full citations in the paragraphs' arXiv ids):
+
+- **Best-evidenced at our data scale: human-curated expert iteration**
+  (RAFT-style). Emu (2309.15807): ~100-2000 curated examples measurably
+  shift style/quality; FluxAudio-S (2606.21670): top-10% filtering of own
+  generations was the DOMINANT gain in music, more than DPO. Recipe:
+  generate 50-100 clips/round, keep top 10-20%, fine-tune the adapter on
+  keepers mixed ~50/50 with the 12 real songs (anti-collapse anchor),
+  LR 1e-5 -> 1e-6, 2-4 rounds, FRESH generations each round (online beats
+  offline, TangoFlux 2412.21037). Two-axis rating: style-match score +
+  artifact veto (turbo codec artifacts must not enter the training set).
+- **FM-DPO exists for flow matching** (MR-FlowDPO 2512.10264, TangoFlux):
+  sigmoid over winner/loser vector-field MSE margins, beta~2000, LR 1e-6,
+  MUST add plain FM loss on winners or winner likelihood decays. On
+  LoRA-only DPO the reference model is free (same weights, adapter off).
+  But published floor is ~2K pairs and even that was marginal -- treat as
+  round-3 once curation plateaus. Diffusion-KTO (2404.04465) uses binary
+  like/dislike labels (no pairs) -- exactly the proposed UX.
+- **Reward/label-conditioned training** has direct music precedent
+  (FluxAudio-S: reward scalar via AdaLN as a second CFG axis). Discrete
+  version: "style-match: high/low" caption token, real songs = high,
+  guide toward high at inference. Uses the REJECTED clips too.
+- **TuneJury** (2606.17006): open CLAP+MERT preference model, usable as a
+  pre-filter so the human only rates plausible candidates.
+- **Failure modes:** preference mode collapse / diversity loss with few
+  raters; mitigate with real-data mixing, few rounds, KL anchoring.
+  All published FM-DPO targets non-distilled models -- DPO on the
+  turbo-distilled 8-step student is uncharted.
+- **Avoid:** online RL (Flow-GRPO -- weeks of machinery), training a
+  personal reward model on <1K judgments, full-parameter DPO.
+- Single-user music personalization is unpublished territory per the
+  2511.15038 survey -- if the curation loop works it's a novel result.
+
 ## Key findings this session (2026-07-06)
 
 **LoKr's "wilder"/less-subtle character vs. LoRA is very likely explained
