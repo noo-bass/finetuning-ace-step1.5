@@ -259,6 +259,232 @@ audio {
   border-color: var(--flag);
 }
 
+.tier-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.tier-btn:disabled:hover {
+  border-color: var(--line);
+}
+
+/* Mode toggle (Tiers | Compare) */
+.round-title-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+  margin-bottom: 0.75rem;
+}
+
+.round-title-row h1 {
+  margin: 0;
+}
+
+.mode-toggle {
+  display: inline-flex;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.mode-toggle button {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  border: none;
+  background: var(--bg);
+  color: var(--muted);
+  padding: 0.4rem 0.8rem;
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.85rem;
+}
+
+.mode-toggle button + button {
+  border-left: 1px solid var(--line);
+}
+
+.mode-toggle button.selected {
+  background: var(--accent);
+  color: var(--bg);
+}
+
+/* Compare mode */
+.compare-view {
+  margin-top: 1.5rem;
+}
+
+.compare-status {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+}
+
+.compare-status-actions {
+  display: inline-flex;
+  gap: 0.5rem;
+}
+
+.compare-pair {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+}
+
+.compare-card {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 1rem;
+}
+
+.compare-card.current {
+  border-color: var(--accent);
+}
+
+.compare-card header {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+  margin-bottom: 0.5rem;
+}
+
+.side-label {
+  font-family: var(--mono);
+  font-weight: 700;
+  font-size: 0.8rem;
+  color: var(--bg);
+  background: var(--muted);
+  border-radius: 5px;
+  padding: 0.05rem 0.45rem;
+}
+
+.compare-card.current .side-label {
+  background: var(--accent);
+}
+
+.compare-card .controls {
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.compare-card .tier-btn {
+  justify-content: center;
+}
+
+.pick-btn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* Stable banner + ranked list */
+.stable-banner {
+  margin-top: 1.5rem;
+  border: 1px solid var(--accent);
+  border-radius: 10px;
+  padding: 1rem;
+  background: var(--card);
+}
+
+.stable-banner p {
+  margin: 0 0 0.75rem;
+}
+
+.compare-results {
+  margin-top: 1.5rem;
+}
+
+.compare-results h2 {
+  font-size: 1.05rem;
+  margin: 0 0 0.5rem;
+}
+
+.ranked-list {
+  list-style: none;
+  margin: 0 0 1rem;
+  padding: 0;
+}
+
+.ranked-list li {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.4rem 0.6rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  margin-bottom: 0.35rem;
+  background: var(--bg);
+}
+
+.ranked-list li.keeper {
+  border-color: var(--top);
+}
+
+.ranked-list.compact li {
+  padding: 0.25rem 0.6rem;
+  font-size: 0.88rem;
+}
+
+.rank-n {
+  font-family: var(--mono);
+  color: var(--muted);
+  min-width: 1.6rem;
+  text-align: right;
+}
+
+.keeper-badge,
+.artifact-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: 0.78rem;
+  border-radius: 5px;
+  padding: 0.05rem 0.45rem;
+}
+
+.keeper-badge {
+  color: var(--top);
+  border: 1px solid var(--top);
+}
+
+.artifact-badge {
+  color: var(--flag);
+  border: 1px solid var(--flag);
+  margin-left: auto;
+}
+
+.icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--fg);
+  cursor: pointer;
+  padding: 0;
+}
+
+.icon-btn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.compare-actions {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.finish-btn {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
 /* Fixed progress bar */
 .progress-bar {
   position: fixed;
@@ -322,5 +548,9 @@ audio {
 
   .progress-bar {
     left: 0;
+  }
+
+  .compare-pair {
+    grid-template-columns: 1fr;
   }
 }

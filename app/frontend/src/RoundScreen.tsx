@@ -1,8 +1,17 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { fetchRatings, fetchRound, putRatings } from './api'
 import { ClipCard } from './ClipCard'
-import { IconAlert, IconCircleCheck, IconDot, IconLoader } from './icons'
-import type { Clip, Ratings, SaveState, Tier } from './types'
+import { CompareView } from './CompareView'
+import {
+  IconAlert,
+  IconCircleCheck,
+  IconDot,
+  IconLoader,
+  IconRows,
+  IconScale,
+} from './icons'
+import { rankClips, targetComparisons } from './pairing'
+import type { Clip, Comparison, Mode, Ratings, SaveState, Tier } from './types'
 
 const SAVE_DEBOUNCE_MS = 800
 
@@ -13,26 +22,34 @@ interface Props {
 
 export function RoundScreen({ roundName, onSaved }: Props) {
   const [clips, setClips] = useState<Clip[] | null>(null)
+  const [mode, setMode] = useState<Mode>('tiers')
   const [ratings, setRatings] = useState<Ratings>({})
+  const [comparisons, setComparisons] = useState<Comparison[]>([])
   const [saveState, setSaveState] = useState<SaveState>('clean')
   const [current, setCurrent] = useState(0)
 
   const audioRefs = useRef(new Map<string, HTMLAudioElement>())
+  const modeRef = useRef<Mode>('tiers')
   const ratingsRef = useRef<Ratings>({})
+  const comparisonsRef = useRef<Comparison[]>([])
   const clipsRef = useRef<Clip[]>([])
   const currentRef = useRef(0)
+  modeRef.current = mode
   ratingsRef.current = ratings
+  comparisonsRef.current = comparisons
   clipsRef.current = clips ?? []
   currentRef.current = current
 
-  // Load clips and any previously saved ratings.
+  // Load clips and any previously saved ratings doc.
   useEffect(() => {
     let cancelled = false
     Promise.all([fetchRound(roundName), fetchRatings(roundName)]).then(
-      ([round, saved]) => {
+      ([round, doc]) => {
         if (cancelled) return
         setClips(round.clips)
-        setRatings(saved)
+        setMode(doc.mode)
+        setRatings(doc.ratings)
+        setComparisons(doc.comparisons)
         setSaveState('clean')
         setCurrent(0)
       },
@@ -53,13 +70,38 @@ export function RoundScreen({ roundName, onSaved }: Props) {
     setSaveState('dirty')
   }, [])
 
+  const addComparison = useCallback((cmp: Comparison) => {
+    setComparisons((prev) => [...prev, cmp])
+    setSaveState('dirty')
+  }, [])
+
+  const undoComparison = useCallback(() => {
+    if (comparisonsRef.current.length === 0) return
+    setComparisons((prev) => prev.slice(0, -1))
+    setSaveState('dirty')
+  }, [])
+
+  const switchMode = useCallback((m: Mode) => {
+    if (modeRef.current === m) return
+    setMode(m)
+    setSaveState('dirty') // the chosen mode persists in the ratings doc
+  }, [])
+
   // Debounced autosave whenever there are unsaved edits.
   useEffect(() => {
     if (saveState !== 'dirty') return
     const t = setTimeout(async () => {
       setSaveState('saving')
       try {
-        await putRatings(roundName, ratingsRef.current)
+        await putRatings(roundName, {
+          mode: modeRef.current,
+          ratings: ratingsRef.current,
+          comparisons: comparisonsRef.current,
+          ranking:
+            modeRef.current === 'pairwise'
+              ? rankClips(clipsRef.current, comparisonsRef.current)
+              : [],
+        })
         // An edit made while the PUT was in flight re-marks state as dirty;
         // only advance to clean if nothing intervened.
         setSaveState((s) => (s === 'saving' ? 'clean' : s))
@@ -69,7 +111,7 @@ export function RoundScreen({ roundName, onSaved }: Props) {
       }
     }, SAVE_DEBOUNCE_MS)
     return () => clearTimeout(t)
-  }, [saveState, ratings, roundName, onSaved])
+  }, [saveState, ratings, comparisons, mode, roundName, onSaved])
 
   const registerAudio = useCallback((id: string, el: HTMLAudioElement | null) => {
     if (el) audioRefs.current.set(id, el)
@@ -95,9 +137,11 @@ export function RoundScreen({ roundName, onSaved }: Props) {
     if (autoplay) void audioRefs.current.get(clip.id)?.play()
   }, [])
 
-  // Keyboard: space play/pause, 1/2/3 tier, a artifact, j/k next/prev.
+  // Tiers-mode keyboard: space play/pause, 1/2/3 tier, a artifact, j/k
+  // next/prev. Compare mode installs its own handler in CompareView.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      if (modeRef.current !== 'tiers') return
       if (e.metaKey || e.ctrlKey || e.altKey) return
       const target = e.target as HTMLElement
       if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement)
@@ -136,42 +180,107 @@ export function RoundScreen({ roundName, onSaved }: Props) {
   return (
     <div className="round-screen">
       <header className="round-header">
-        <h1>{roundName}</h1>
+        <div className="round-title-row">
+          <h1>{roundName}</h1>
+          <div className="mode-toggle" role="group" aria-label="Rating mode">
+            <button
+              type="button"
+              className={mode === 'tiers' ? 'selected' : ''}
+              aria-pressed={mode === 'tiers'}
+              onClick={(e) => {
+                switchMode('tiers')
+                e.currentTarget.blur()
+              }}
+            >
+              <IconRows /> Tiers
+            </button>
+            <button
+              type="button"
+              className={mode === 'pairwise' ? 'selected' : ''}
+              aria-pressed={mode === 'pairwise'}
+              onClick={(e) => {
+                switchMode('pairwise')
+                e.currentTarget.blur()
+              }}
+            >
+              <IconScale /> Compare
+            </button>
+          </div>
+        </div>
         <p className="lead">
           Grade on a curve, gut speed — the question is which of these are{' '}
-          <em>most you</em>, not whether they are releasable. <strong>Top pick</strong>{' '}
-          = your best 2–4 of this hand (these become training data).{' '}
-          <strong>Keep</strong> = plausible, right direction. <strong>Pass</strong> =
-          not you. <strong>Artifacts</strong> is an independent flag for AI garble and
-          codec junk — flagged clips never enter training, no matter how stylish. Clip
+          <em>most you</em>, not whether they are releasable.{' '}
+          {mode === 'tiers' ? (
+            <>
+              <strong>Top pick</strong> = your best 2–4 of this hand (these become
+              training data). <strong>Keep</strong> = plausible, right direction.{' '}
+              <strong>Pass</strong> = not you.
+            </>
+          ) : (
+            <>
+              Forced choice: of each pair, pick whichever is <em>more</em> you —
+              even when both are far off, the winner still carries signal.
+            </>
+          )}{' '}
+          <strong>Artifacts</strong> is an independent flag for AI garble and codec
+          junk — flagged clips never enter training, no matter how stylish. Clip
           names are deliberately meaningless.
         </p>
         <p className="lead keys">
-          Keyboard: <kbd>space</kbd> play/pause, <kbd>1</kbd> top pick, <kbd>2</kbd>{' '}
-          keep, <kbd>3</kbd> pass, <kbd>a</kbd> artifact flag, <kbd>j</kbd>/<kbd>k</kbd>{' '}
-          next/previous.
+          {mode === 'tiers' ? (
+            <>
+              Keyboard: <kbd>space</kbd> play/pause, <kbd>1</kbd> top pick,{' '}
+              <kbd>2</kbd> keep, <kbd>3</kbd> pass, <kbd>a</kbd> artifact flag,{' '}
+              <kbd>j</kbd>/<kbd>k</kbd> next/previous.
+            </>
+          ) : (
+            <>
+              Keyboard: <kbd>left</kbd>/<kbd>right</kbd> arrow picks the winner,{' '}
+              <kbd>space</kbd> toggles play between A and B, <kbd>u</kbd> undoes
+              the last comparison.
+            </>
+          )}
         </p>
       </header>
 
-      <div className="clips">
-        {clips.map((clip, i) => (
-          <ClipCard
-            key={clip.id}
-            clip={clip}
-            index={i}
-            total={clips.length}
-            rating={ratings[clip.id] ?? {}}
-            isCurrent={i === current}
-            onRate={rate}
-            onPlay={handlePlay}
-            registerAudio={registerAudio}
-          />
-        ))}
-      </div>
+      {mode === 'tiers' ? (
+        <div className="clips">
+          {clips.map((clip, i) => (
+            <ClipCard
+              key={clip.id}
+              clip={clip}
+              index={i}
+              total={clips.length}
+              rating={ratings[clip.id] ?? {}}
+              isCurrent={i === current}
+              onRate={rate}
+              onPlay={handlePlay}
+              registerAudio={registerAudio}
+            />
+          ))}
+        </div>
+      ) : (
+        <CompareView
+          clips={clips}
+          ratings={ratings}
+          comparisons={comparisons}
+          onCompare={addComparison}
+          onUndo={undoComparison}
+          onToggleArtifact={(id) => rate(id, 'flag')}
+        />
+      )}
 
       <footer className="progress-bar">
         <span className="progress-text">
-          {rated}/{clips.length} rated ({tops} top pick{tops === 1 ? '' : 's'})
+          {mode === 'tiers' ? (
+            <>
+              {rated}/{clips.length} rated ({tops} top pick{tops === 1 ? '' : 's'})
+            </>
+          ) : (
+            <>
+              {comparisons.length}/~{targetComparisons(clips.length)} comparisons
+            </>
+          )}
         </span>
         <span className={`save-state save-${saveState}`}>
           {saveState === 'clean' && (
