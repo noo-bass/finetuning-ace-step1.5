@@ -80,7 +80,22 @@ SCHEMA_PROMPT = (
     "nothing else."
 )
 
-_SCHEMA_LABELS = ("GENRES", "INSTRUMENTATION", "VOCALS", "PRODUCTION", "AESTHETIC")
+# Canonical schema key -> regex matching the label word the model might use.
+# The model drifts to singular/alternate spellings ("GENRE:", "INSTRUMENTS:",
+# "VOCAL:") despite the prompt spelling out the plural form, so each pattern
+# accepts the natural singular/plural variants. Order matters where one
+# alternative is a prefix of another (INSTRUMENTATION contains INSTRUMENT).
+_LABEL_ALTS = {
+    "GENRES": r"GENRES?",
+    "INSTRUMENTATION": r"INSTRUMENTATION|INSTRUMENTS?",
+    "VOCALS": r"VOCALS?",
+    "PRODUCTION": r"PRODUCTIONS?",
+    "AESTHETIC": r"AESTHETICS?",
+}
+# AESTHETIC is the last line and occasionally gets truncated by the token
+# budget or dropped by the model; _render_caption already tolerates an
+# empty aesthetic list, so only the other four are load-bearing.
+_REQUIRED_LABELS = ("GENRES", "INSTRUMENTATION", "VOCALS", "PRODUCTION")
 
 
 def _split_phrases(text: str) -> list:
@@ -96,31 +111,36 @@ def _split_phrases(text: str) -> list:
 
 
 def _parse_schema(text: str) -> dict:
-    """Extract and validate the five labeled lines from a model response.
-    Tolerates markdown bold/bullets around labels (e.g. "**GENRES:**").
-    Raises ValueError on anything unusable."""
+    """Extract and validate the labeled lines from a model response.
+    Tolerates markdown bold/bullets around labels (e.g. "**GENRES:**") and
+    singular/plural label drift. Raises ValueError on anything unusable."""
     import re
-    pattern = re.compile(r"(?im)^[\s\-*#>]*(" + "|".join(_SCHEMA_LABELS) + r")[\s*]*:[\s*]*")
-    matches = list(pattern.finditer(text))
-    found = {m.group(1).upper() for m in matches}
-    missing = [label for label in _SCHEMA_LABELS if label not in found]
+    pattern = re.compile(
+        r"(?im)^[\s\-*#>]*(?:"
+        + "|".join(f"(?P<{k}>{v})" for k, v in _LABEL_ALTS.items())
+        + r")[\s*]*:[\s*]*"
+    )
+    matches = []
+    for m in pattern.finditer(text):
+        label = next(k for k, v in m.groupdict().items() if v is not None)
+        matches.append((label, m))
+    found = {label for label, _ in matches}
+    missing = [label for label in _REQUIRED_LABELS if label not in found]
     if missing:
         raise ValueError(f"missing labeled lines {missing}: {text[:200]!r}")
     fields = {}
-    for idx, m in enumerate(matches):
-        label = m.group(1).upper()
+    for idx, (label, m) in enumerate(matches):
         start = m.end()
-        end = matches[idx + 1].start() if idx + 1 < len(matches) else len(text)
+        end = matches[idx + 1][1].start() if idx + 1 < len(matches) else len(text)
         fields[label] = text[start:end].strip()
 
-    vocals_raw = fields["VOCALS"]
-    vocals_chars = _split_phrases(vocals_raw)
+    vocals_chars = _split_phrases(fields["VOCALS"])
     schema = {
         "genres": _split_phrases(fields["GENRES"]),
         "instrumentation": _split_phrases(fields["INSTRUMENTATION"]),
         "vocals": {"present": bool(vocals_chars), "character": vocals_chars},
         "production": _split_phrases(fields["PRODUCTION"]),
-        "aesthetic": _split_phrases(fields["AESTHETIC"]),
+        "aesthetic": _split_phrases(fields.get("AESTHETIC", "")),
     }
     for key in ("genres", "instrumentation", "production"):
         if not schema[key]:
