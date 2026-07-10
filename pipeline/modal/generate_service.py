@@ -59,7 +59,8 @@ jobs_vol = modal.Volume.from_name("acestep-lora-jobs", create_if_missing=True)
 )
 def generate(job_id: str, track_index: int = 0, use_lora: bool = True, seed: int = 42,
              lora_subpath: str = "lora_output/final", caption_override: str = "",
-             save_subdir: str = "", adapter_strength: float = 1.0) -> dict:
+             save_subdir: str = "", adapter_strength: float = 1.0,
+             adapter_mask_steps: int = 0) -> dict:
     import json
     import sys
     from pathlib import Path
@@ -92,6 +93,7 @@ def generate(job_id: str, track_index: int = 0, use_lora: bool = True, seed: int
 
     lora_status = None
     lora_verification = None
+    mask_state = None
     if use_lora:
         lora_path = f"/root/jobs/{job_id}/{lora_subpath}"
         # add_lora() derives the adapter name from the checkpoint dir's
@@ -168,6 +170,43 @@ def generate(job_id: str, track_index: int = 0, use_lora: bool = True, seed: int
             print(f"[generate] adapter strength set to {adapter_strength} "
                   f"across {scaled_layers} layers")
 
+        # Step-masked inference (dadabots/T-LoRA): keep the adapter OFF for
+        # the first N denoising steps so the frozen base model decides song
+        # structure, then switch it on to style the surface. Implemented by
+        # wrapping decoder.forward with a call counter -- with turbo's
+        # 8-step schedule and no CFG doubling, one decoder call == one step.
+        # decoder_calls is reported in the result so that assumption is
+        # verified, not trusted.
+        if adapter_mask_steps > 0:
+            peft_scalings = []
+            if is_peft:
+                for module in decoder.modules():
+                    scaling = getattr(module, "scaling", None)
+                    if isinstance(scaling, dict) and "loaded_adapter" in scaling:
+                        peft_scalings.append((scaling, scaling["loaded_adapter"]))
+            lyc_net = getattr(decoder, "_lycoris_net", None) if has_lycoris else None
+            lyc_on = getattr(lyc_net, "multiplier", 1.0) if lyc_net is not None else None
+            if not peft_scalings and lyc_net is None:
+                raise RuntimeError(
+                    f"adapter_mask_steps={adapter_mask_steps} requested but no "
+                    f"maskable adapter layers were found"
+                )
+            mask_state = {"calls": 0}
+            orig_forward = decoder.forward
+
+            def masked_forward(*args, **kwargs):
+                off = mask_state["calls"] < adapter_mask_steps
+                for scaling, on_val in peft_scalings:
+                    scaling["loaded_adapter"] = 0.0 if off else on_val
+                if lyc_net is not None:
+                    lyc_net.multiplier = 0.0 if off else lyc_on
+                mask_state["calls"] += 1
+                return orig_forward(*args, **kwargs)
+
+            decoder.forward = masked_forward
+            print(f"[generate] adapter masked for first {adapter_mask_steps} "
+                  f"decoder calls")
+
     params = GenerationParams(
         task_type="text2music",
         caption=sample["caption"],
@@ -193,6 +232,10 @@ def generate(job_id: str, track_index: int = 0, use_lora: bool = True, seed: int
     Path(save_dir).mkdir(parents=True, exist_ok=True)
 
     result = generate_music(dit_handler, None, params, config, save_dir=save_dir)
+
+    if mask_state is not None:
+        print(f"[generate] decoder was called {mask_state['calls']} times "
+              f"({adapter_mask_steps} masked); inference_steps={params.inference_steps}")
 
     jobs_vol.commit()
     # audios[i] includes a raw torch.Tensor waveform -- fine to pickle leaving
