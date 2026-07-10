@@ -68,9 +68,13 @@ def generate(job_id: str, track_index: int = 0, use_lora: bool = True, seed: int
     """task_type: text2music | cover | repaint | lego | extract | complete.
     src_audio / reference_audio are job-relative paths on the volume (e.g.
     "audio/Mk.gee - Alesis ... .wav"). flow_edit_morph steers text2music
-    with a source track; n_min/n_max bound which portion of the denoising
-    trajectory is re-generated -- effectively a transform-strength window
-    (low n_max = gentle recolor, full window = heavy reimagining)."""
+    with a source track. Window semantics (verified against
+    models/common/flow_edit.py -- the loop runs noise->data):
+    steps BEFORE n_min are skipped (source preserved at those scales --
+    n_min is the structure-preservation knob), steps AFTER n_max
+    free-generate toward the target (destructive). So:
+    gentle recolor = [0.6, 1.0]; medium = [0.3, 1.0]; heavy = [0.0, 1.0];
+    n_max < 1.0 adds a free-regeneration tail -- rarely what you want."""
     import json
     import sys
     from pathlib import Path
