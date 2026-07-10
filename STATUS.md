@@ -151,6 +151,22 @@ adapter's damage isn't confined to early steps. Knob kept (useful product
 surface), de-prioritized as a rescue technique. Next arm: DreamBooth-style
 prior preservation + clinical schema captions on Mk.gee (mkgee-db job).
 
+**DreamBooth arm (2026-07-10, mkgee-clinical job).** Clinical schema
+captioning (labeled-lines format after a JSON saga -- repetition_penalty is
+fundamentally incompatible with JSON's repeated structural tokens; see
+moss_caption_service.py comments), term-level consensus aggregation
+(`derive_style_prompt.py`) producing an evidence-counted 33-word style
+prompt, then prior-preservation training: 12 real tracks (style-prefixed
+captions) + 24 frozen-base-model self-generations (plain captions) as reg
+data, rank 16 / alpha 32 / lr 1e-4 / attn+FFN / 150 epochs. Result: loss
+0.7494 at epoch 110 (best of any run; previous best 0.781) with NO
+overfitting bounce -- the first monotonic-through-epoch-90 descent we've
+seen; mild noise-level wobble after 110. Round-4 A/B set in
+generations/mkgee-moss/listening/ (db_*): triggered vs base vs untriggered
+control. Perceptual verdict pending. Data-quality notes: MOSS repeated its
+vocalist-gender error on one track and leaked one artist name; both were
+diluted away by the aggregation threshold, which is the design working.
+
 Operational gotcha discovered: `modal run --detach` does NOT return at
 launch -- it stays attached streaming logs until the remote function
 finishes (detach only decouples the remote run's lifetime from the client).
