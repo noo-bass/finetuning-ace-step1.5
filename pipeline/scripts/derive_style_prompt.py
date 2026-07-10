@@ -12,6 +12,7 @@ Usage:
         [--threshold 0.55]
 """
 import argparse
+import re
 import json
 import math
 import sys
@@ -20,6 +21,57 @@ from collections import Counter
 
 def normalize(value: str) -> str:
     return " ".join(str(value).lower().strip().split())
+
+
+STOPWORDS = {
+    "the", "a", "an", "of", "with", "for", "and", "or", "on", "in", "into",
+    "that", "to", "at", "over", "through", "while", "yet", "without", "via",
+    "across", "all", "its", "their", "his", "her", "throughout", "rather",
+    "than", "meets", "blending", "creating", "preserving", "emphasizing",
+    "evoking", "adding", "conveying", "prioritizing", "reminiscent",
+}
+
+
+def term_support(fields: dict, n_tracks_by_field: dict) -> dict:
+    """Per-field track-support counts at the TERM level (unigrams+bigrams,
+    stopword-filtered). MOSS paraphrases the same attribute differently per
+    track ('gentle tape saturation' vs 'tape saturation warmth'), so exact-
+    phrase counting drastically undercounts consensus; term counting keeps
+    the audit trail ('saturation: 10/12') without hand-merging synonyms."""
+    per_field = {}
+    for field, per_track_phrases in fields.items():
+        counter = Counter()
+        for phrases in per_track_phrases:
+            terms = set()
+            for phrase in phrases:
+                words = [w for w in re.split(r"[^a-z0-9&'-]+", phrase)
+                         if w and w not in STOPWORDS]
+                terms.update(words)
+                terms.update(f"{a} {b}" for a, b in zip(words, words[1:]))
+            counter.update(terms)
+        per_field[field] = counter
+    return per_field
+
+
+def pick_terms(counter: Counter, min_support: int, max_terms: int) -> list:
+    """Highest-support terms, preferring bigrams over the unigrams they
+    contain (keep 'tape saturation', drop bare 'tape'/'saturation')."""
+    kept = []
+    eligible = [(t, c) for t, c in counter.most_common() if c >= min_support]
+    bigrams = [(t, c) for t, c in eligible if " " in t]
+    unigrams = [(t, c) for t, c in eligible if " " not in t]
+    covered = set()
+    for term, _ in bigrams:
+        if len(kept) >= max_terms:
+            break
+        kept.append(term)
+        covered.update(term.split())
+    for term, _ in unigrams:
+        if len(kept) >= max_terms:
+            break
+        if term not in covered:
+            kept.append(term)
+    return kept
 
 
 def collect(schemas: dict) -> dict:
@@ -51,25 +103,38 @@ def main():
     schemas = json.load(open(args.schemas_json))
     n = len(schemas)
     min_support = math.ceil(args.threshold * n)
-    fields = collect(schemas)
 
-    print(f"# Evidence table ({n} tracks, threshold >= {min_support})\n")
-    kept = {}
-    for field, counter in fields.items():
-        kept[field] = [a for a, c in counter.most_common() if c >= min_support]
+    # per-field list of per-track phrase lists (term counting needs
+    # track-level grouping, not a flat counter)
+    per_track = {"genres": [], "instrumentation": [], "vocal_character": [],
+                 "production": [], "aesthetic": []}
+    for schema in schemas.values():
+        per_track["genres"].append([normalize(x) for x in schema.get("genres") or []])
+        per_track["instrumentation"].append([normalize(x) for x in schema.get("instrumentation") or []])
+        per_track["production"].append([normalize(x) for x in schema.get("production") or []])
+        per_track["aesthetic"].append([normalize(x) for x in schema.get("aesthetic") or []])
+        vocals = schema.get("vocals") or {}
+        per_track["vocal_character"].append(
+            [normalize(x) for x in (vocals.get("character") or [])] if vocals.get("present") else [])
+
+    terms = term_support(per_track, {})
+    print(f"# Term-level evidence ({n} tracks, threshold >= {min_support}; "
+          f"genres use >= 3)\n")
+    for field, counter in terms.items():
         print(f"## {field}")
-        for attr, count in counter.most_common():
-            marker = "KEEP" if count >= min_support else "    "
-            print(f"  {marker}  {count:2d}/{n}  {attr}")
+        for term, count in counter.most_common(15):
+            marker = "KEEP" if count >= (3 if field == "genres" else min_support) else "    "
+            print(f"  {marker}  {count:2d}/{n}  {term}")
         print()
 
-    # Disagreement check: a field where nothing clears threshold but several
-    # attributes sit just under it suggests a bimodal dataset.
-    for field, counter in fields.items():
-        near = [a for a, c in counter.items() if min_support > c >= max(2, min_support - 2)]
-        if not kept[field] and near:
-            print(f"[WARN] no consensus in {field!r}; near-misses: {near} -- "
-                  f"dataset may be stylistically bimodal, consider splitting\n")
+    kept = {
+        # genres are inherently multi-modal across a discography: lower bar
+        "genres": pick_terms(terms["genres"], 3, 4),
+        "instrumentation": pick_terms(terms["instrumentation"], min_support, 6),
+        "vocal_character": pick_terms(terms["vocal_character"], min_support, 4),
+        "production": pick_terms(terms["production"], min_support, 5),
+        "aesthetic": pick_terms(terms["aesthetic"], min_support, 3),
+    }
 
     parts = []
     if kept["genres"]:
