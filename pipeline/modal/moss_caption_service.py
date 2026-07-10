@@ -44,22 +44,24 @@ CAPTION_PROMPT = (
 # programmatic cross-track aggregation (style-prompt derivation with
 # evidence counts).
 SCHEMA_PROMPT = (
-    "Listen to this song and output ONLY a single JSON object -- no markdown, "
-    "no code fences, no commentary -- with exactly these keys:\n"
-    '{"genres": [], "instrumentation": [], '
-    '"vocals": {"present": true, "character": []}, '
-    '"production": [], "aesthetic": []}\n'
-    "- genres: 2-4 genre tags\n"
-    "- instrumentation: 4-8 concrete sound sources, e.g. 'clean electric "
-    "guitar', 'analog synth pad', 'drum machine'\n"
-    "- vocals.character: 2-5 short technical descriptors, e.g. 'breathy male "
-    "falsetto', 'double-tracked', 'heavy reverb'; empty list if instrumental\n"
-    "- production: 4-8 technical mixing/production descriptors, e.g. 'tape "
-    "saturation', 'wide stereo image', 'heavy bus compression', 'lo-fi haze'\n"
-    "- aesthetic: 1-3 short recording-character phrases, e.g. 'bedroom DIY', "
-    "'polished studio'\n"
-    "Use plain studio-engineer vocabulary. No metaphors, no storytelling, "
-    "no tempo, no BPM, no musical key, no artist or song names."
+    "Listen to this song and describe it as a single JSON object with keys "
+    "genres, instrumentation, vocals, production, aesthetic. Output ONLY the "
+    "JSON -- no markdown fences, no commentary. Here is an example of the "
+    "required format describing a DIFFERENT song (a techno track -- do NOT "
+    "copy its content, describe THIS song):\n"
+    '{"genres": ["techno", "minimal techno"], '
+    '"instrumentation": ["analog kick drum", "modular synth sequence", '
+    '"hi-hat machine", "sub bass"], '
+    '"vocals": {"present": false, "character": []}, '
+    '"production": ["heavy sidechain compression", "narrow mono low end", '
+    '"long delay tails", "club-oriented loudness"], '
+    '"aesthetic": ["dark warehouse"]}\n'
+    "Rules: 2-4 genre tags; 4-8 concrete sound sources in instrumentation; "
+    "2-5 short technical vocal descriptors (empty list and present=false if "
+    "instrumental); 4-8 technical mixing/production descriptors; 1-3 "
+    "recording-character phrases in aesthetic. Use plain studio-engineer "
+    "vocabulary. No metaphors, no storytelling, no tempo, no BPM, no musical "
+    "key, no artist or song names."
 )
 
 
@@ -224,7 +226,8 @@ def caption_job(src_job_id: str, dst_job_id: str, max_words: int = 110,
                 except Exception as exc:
                     last_err = exc
                     print(f"[moss] {sample['filename']}: bad schema on attempt "
-                          f"{attempt+1} ({exc}), retrying", flush=True)
+                          f"{attempt+1} ({exc}), retrying\n"
+                          f"        raw: {raw[:300]!r}", flush=True)
             else:
                 caption = raw
                 if len(caption.split()) >= 30:
