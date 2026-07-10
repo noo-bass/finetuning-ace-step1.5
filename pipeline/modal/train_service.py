@@ -147,7 +147,7 @@ def _ensure_preprocessed(job_id: str, precision: str) -> str:
 
 def _run_training(job_id: str, epochs: int, save_every: int, precision: str,
                    lr: float = 1e-4, output_subdir: str = "lora_output",
-                   target_modules: str = "") -> dict:
+                   target_modules: str = "", rank: int = 0, alpha: int = 0) -> dict:
     """Shared implementation for both calibrate() and train_lora().
 
     lr defaults to train.py's own default (1e-4) -- pass explicitly to
@@ -183,6 +183,13 @@ def _run_training(job_id: str, epochs: int, save_every: int, precision: str,
     ]
     if target_modules.strip():
         cmd += ["--target-modules", *target_modules.split()]
+    # rank/alpha: 0 = keep train.py's defaults (64/128). Community consensus
+    # for ~12-song datasets is rank 16-32 with alpha = 2x rank -- high rank
+    # gives the adapter enough capacity to memorize the songs outright.
+    if rank > 0:
+        cmd += ["--rank", str(rank)]
+    if alpha > 0:
+        cmd += ["--alpha", str(alpha)]
 
     start = time.time()
     result = subprocess.run(cmd, cwd="/root", capture_output=True, text=True, env=_SUBPROCESS_ENV)
@@ -252,9 +259,11 @@ def calibrate(job_id: str, epochs: int = 20, save_every: int = 20, precision: st
     timeout=6 * 3600,
 )
 def train_lora(job_id: str, epochs: int = 800, save_every: int = 25, precision: str = "bf16",
-               lr: float = 1e-4, output_subdir: str = "lora_output", target_modules: str = ""):
+               lr: float = 1e-4, output_subdir: str = "lora_output", target_modules: str = "",
+               rank: int = 0, alpha: int = 0):
     """Full training run for one job. Call with `.spawn()` from a web endpoint for async use."""
-    result = _run_training(job_id, epochs, save_every, precision, lr, output_subdir, target_modules)
+    result = _run_training(job_id, epochs, save_every, precision, lr, output_subdir, target_modules,
+                           rank, alpha)
     print(f"[train_lora] {result['epochs']} epochs in {result['elapsed_seconds']/3600:.2f}h, "
           f"returncode={result['returncode']}, adapter_produced={result['adapter_produced']}")
     if result["warning"]:

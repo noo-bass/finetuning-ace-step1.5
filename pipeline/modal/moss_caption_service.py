@@ -37,6 +37,63 @@ CAPTION_PROMPT = (
     "or any artist or song names."
 )
 
+# Clinical/structured mode: strict JSON out, prose rendered by code. Flowery
+# free-text captions ("luminous yet wistful atmosphere") proved both hard to
+# audit and far from ACE-Step's taggy native conditioning register; schema
+# fields leave no room for poetry, and downstream the per-field lists enable
+# programmatic cross-track aggregation (style-prompt derivation with
+# evidence counts).
+SCHEMA_PROMPT = (
+    "Listen to this song and output ONLY a single JSON object -- no markdown, "
+    "no code fences, no commentary -- with exactly these keys:\n"
+    '{"genres": [], "instrumentation": [], '
+    '"vocals": {"present": true, "character": []}, '
+    '"production": [], "aesthetic": []}\n'
+    "- genres: 2-4 genre tags\n"
+    "- instrumentation: 4-8 concrete sound sources, e.g. 'clean electric "
+    "guitar', 'analog synth pad', 'drum machine'\n"
+    "- vocals.character: 2-5 short technical descriptors, e.g. 'breathy male "
+    "falsetto', 'double-tracked', 'heavy reverb'; empty list if instrumental\n"
+    "- production: 4-8 technical mixing/production descriptors, e.g. 'tape "
+    "saturation', 'wide stereo image', 'heavy bus compression', 'lo-fi haze'\n"
+    "- aesthetic: 1-3 short recording-character phrases, e.g. 'bedroom DIY', "
+    "'polished studio'\n"
+    "Use plain studio-engineer vocabulary. No metaphors, no storytelling, "
+    "no tempo, no BPM, no musical key, no artist or song names."
+)
+
+
+def _parse_schema(text: str) -> dict:
+    """Extract and validate the JSON object from a model response.
+    Raises ValueError on anything unusable."""
+    import json
+    start, end = text.find("{"), text.rfind("}")
+    if start == -1 or end <= start:
+        raise ValueError(f"no JSON object in response: {text[:200]!r}")
+    schema = json.loads(text[start:end + 1])
+    for key in ("genres", "instrumentation", "production"):
+        if not isinstance(schema.get(key), list) or not schema[key]:
+            raise ValueError(f"schema key {key!r} missing/empty")
+    vocals = schema.get("vocals") or {}
+    if not isinstance(vocals, dict):
+        raise ValueError("schema key 'vocals' not an object")
+    return schema
+
+
+def _render_caption(schema: dict) -> str:
+    """Deterministic clinical caption from a track schema."""
+    parts = [", ".join(schema["genres"]).capitalize()]
+    parts.append("Instrumentation: " + ", ".join(schema["instrumentation"]))
+    vocals = schema.get("vocals") or {}
+    if vocals.get("present") and vocals.get("character"):
+        parts.append("Vocals: " + ", ".join(vocals["character"]))
+    else:
+        parts.append("Instrumental")
+    parts.append("Production: " + ", ".join(schema["production"]))
+    if schema.get("aesthetic"):
+        parts.append(", ".join(schema["aesthetic"]).capitalize())
+    return ". ".join(parts) + "."
+
 image = (
     modal.Image.debian_slim(python_version="3.11")
     .apt_install("git", "ffmpeg", "libsndfile1")
@@ -76,9 +133,14 @@ hf_cache_vol = modal.Volume.from_name("hf-hub-cache", create_if_missing=True)
     timeout=2 * 3600,
 )
 def caption_job(src_job_id: str, dst_job_id: str, max_words: int = 110,
-                max_retries: int = 2):
+                max_retries: int = 2, clinical: bool = False):
     """Caption every sample of <src_job_id> and write <dst_job_id> with
-    swapped captions. Idempotent-ish: re-running overwrites dst outputs."""
+    swapped captions. Idempotent-ish: re-running overwrites dst outputs.
+
+    clinical=True switches to schema mode: MOSS returns strict JSON at
+    low temperature, the caption is rendered from it by code, and the
+    per-track schemas are saved to moss_schemas.json for downstream
+    aggregation (style-prompt derivation)."""
     import json
     import os
     import shutil
@@ -125,41 +187,59 @@ def caption_job(src_job_id: str, dst_job_id: str, max_words: int = 110,
             wav, _ = librosa.load(path, sr=sample_rate, mono=True)
             return torch.from_numpy(wav)
 
+    prompt = SCHEMA_PROMPT if clinical else CAPTION_PROMPT
+    # Low temperature in clinical mode: infer.py's temperature=1.0 actively
+    # encourages florid prose and JSON drift; 0.3 keeps output terse/parseable.
+    temperature = 0.3 if clinical else 1.0
+
     def generate_caption(audio_path: Path, seed: int) -> str:
         torch.manual_seed(seed)
         raw_audio = load_audio_robust(str(audio_path), sample_rate=processor.config.mel_sr)
-        inputs = processor(text=CAPTION_PROMPT, audios=[raw_audio], return_tensors="pt")
+        inputs = processor(text=prompt, audios=[raw_audio], return_tensors="pt")
         inputs["audio_input_mask"] = inputs["input_ids"] == processor.audio_token_id
         inputs = {k: v.to("cuda:0") if hasattr(v, "to") else v for k, v in inputs.items()}
         generated_ids = model.generate(
-            **inputs, max_new_tokens=400, do_sample=True, num_beams=1,
-            temperature=1.0, top_p=0.8, top_k=50, use_cache=True,
+            **inputs, max_new_tokens=500, do_sample=True, num_beams=1,
+            temperature=temperature, top_p=0.8, top_k=50, use_cache=True,
         )
         input_len = inputs["input_ids"].shape[1]
         return processor.decode(generated_ids[0, input_len:], skip_special_tokens=True).strip()
 
     raw_outputs = {}
+    schemas = {}
     new_samples = []
     for i, sample in enumerate(samples):
         # sample["filename"] already carries the "audio/" prefix (see
         # prep_service.py: "filename": f"audio/{audio_path.name}") --
         # don't re-add it or the path doubles to audio/audio/....
         audio_path = src_dir / sample["filename"]
-        caption = ""
+        caption, schema, raw, last_err = "", None, "", None
         for attempt in range(1 + max_retries):
-            caption = generate_caption(audio_path, seed=42 + attempt)
-            words = caption.split()
-            if len(words) >= 30:
-                break
-            print(f"[moss] {sample['filename']}: short/empty caption on "
-                  f"attempt {attempt+1} ({len(words)} words), retrying", flush=True)
+            raw = generate_caption(audio_path, seed=42 + attempt)
+            if clinical:
+                try:
+                    schema = _parse_schema(raw)
+                    caption = _render_caption(schema)
+                    break
+                except Exception as exc:
+                    last_err = exc
+                    print(f"[moss] {sample['filename']}: bad schema on attempt "
+                          f"{attempt+1} ({exc}), retrying", flush=True)
+            else:
+                caption = raw
+                if len(caption.split()) >= 30:
+                    break
+                print(f"[moss] {sample['filename']}: short/empty caption on "
+                      f"attempt {attempt+1}, retrying", flush=True)
         words = caption.split()
-        if len(words) < 30:
+        if (clinical and schema is None) or len(words) < (10 if clinical else 30):
             raise RuntimeError(
-                f"MOSS produced no usable caption for {sample['filename']} "
-                f"after {1+max_retries} attempts: {caption!r}"
+                f"MOSS produced no usable output for {sample['filename']} "
+                f"after {1+max_retries} attempts (last error: {last_err})"
             )
-        raw_outputs[sample["filename"]] = caption
+        raw_outputs[sample["filename"]] = raw
+        if schema is not None:
+            schemas[sample["filename"]] = schema
         clamped = " ".join(words[:max_words])
         new_samples.append({**sample, "caption": clamped})
         print(f"[moss] {i+1}/{len(samples)} {sample['filename']}: "
@@ -175,9 +255,12 @@ def caption_job(src_job_id: str, dst_job_id: str, max_words: int = 110,
     (dst_dir / "dataset.json").write_text(json.dumps(dst_dataset, indent=2, ensure_ascii=False))
     (dst_dir / "moss_captions_raw.json").write_text(
         json.dumps(raw_outputs, indent=2, ensure_ascii=False))
+    if schemas:
+        (dst_dir / "moss_schemas.json").write_text(
+            json.dumps(schemas, indent=2, ensure_ascii=False))
     jobs_vol.commit()
 
-    print(f"[moss] wrote {dst_dir}/dataset.json ({len(new_samples)} samples) "
-          f"+ moss_captions_raw.json", flush=True)
+    print(f"[moss] wrote {dst_dir}/dataset.json ({len(new_samples)} samples)"
+          f"{' + moss_schemas.json' if schemas else ''}", flush=True)
     return {"dst_job_id": dst_job_id, "samples": len(new_samples),
-            "captions": raw_outputs}
+            "captions": raw_outputs, "schemas": schemas}

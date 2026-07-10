@@ -141,6 +141,16 @@ bottomed at epoch 75 (0.781), rose to 0.832 by 100. Responses, all in
   train services should save + surface the best-loss checkpoint, and
   Side-Step's `--ema-decay` is worth adopting.
 
+**Step-masked inference tested and did NOT clearly help (user's ears).**
+Implemented `--adapter-mask-steps` in generate_service.py (adapter scaling
+zeroed for the first N of 8 turbo steps, verified 1 decoder call == 1 step),
+generated mask 2/3 x strength x checkpoint variants of lora_ffn_lr1e-3 --
+user verdict: "not really better." The dadabots/T-LoRA structure-vs-texture
+split may not transfer cleanly to ACE-Step turbo's 8-step schedule, or this
+adapter's damage isn't confined to early steps. Knob kept (useful product
+surface), de-prioritized as a rescue technique. Next arm: DreamBooth-style
+prior preservation + clinical schema captions on Mk.gee (mkgee-db job).
+
 Operational gotcha discovered: `modal run --detach` does NOT return at
 launch -- it stays attached streaming logs until the remote function
 finishes (detach only decouples the remote run's lifetime from the client).
