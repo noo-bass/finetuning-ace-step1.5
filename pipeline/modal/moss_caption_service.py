@@ -228,9 +228,12 @@ def caption_job(src_job_id: str, dst_job_id: str, max_words: int = 110,
             return torch.from_numpy(wav)
 
     prompt = SCHEMA_PROMPT if clinical else CAPTION_PROMPT
-    # Low temperature in clinical mode: infer.py's temperature=1.0 actively
-    # encourages florid prose and JSON drift; 0.3 keeps output terse/parseable.
-    temperature = 0.3 if clinical else 1.0
+    # Clinical mode temperature is a squeeze: 1.0 (infer.py's default)
+    # produces florid prose and JSON drift, but 0.3 degenerates into
+    # repetition loops ("synthwave", "retrowave", ... forever) that never
+    # close the JSON. 0.6 + repetition_penalty is the working middle.
+    temperature = 0.6 if clinical else 1.0
+    repetition_penalty = 1.15 if clinical else 1.0
 
     def generate_caption(audio_path: Path, seed: int) -> str:
         torch.manual_seed(seed)
@@ -241,6 +244,7 @@ def caption_job(src_job_id: str, dst_job_id: str, max_words: int = 110,
         generated_ids = model.generate(
             **inputs, max_new_tokens=500, do_sample=True, num_beams=1,
             temperature=temperature, top_p=0.8, top_k=50, use_cache=True,
+            repetition_penalty=repetition_penalty,
         )
         input_len = inputs["input_ids"].shape[1]
         return processor.decode(generated_ids[0, input_len:], skip_special_tokens=True).strip()
