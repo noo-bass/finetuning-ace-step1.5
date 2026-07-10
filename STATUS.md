@@ -192,6 +192,20 @@ background each client and `wait`.
   to the target than MOSS-derived captions reach. Exploration/exploitation
   for prompt space; revisit once the basic loop demonstrably converges.
 
+## Flow-edit window semantics + operating point (2026-07-10)
+
+The morph window was initially used BACKWARDS: [0.0, 0.4] edits the
+structural steps then free-generates the rest (maximally destructive) --
+user: "sounds NOTHING like the original". Verified in
+models/common/flow_edit.py: steps before n_min are skipped (source
+preserved; n_min = structure-preservation knob), steps after n_max
+free-generate toward the target. Corrected ladder auditioned; user picked
+**medium [0.3, 1.0] as the operating point** ("good mid-line"), gentle
+[0.6, 1.0] for variety. MOSS zero-shot similarity judging failed its
+sanity exam (real-vs-real scored 2/10, = real-vs-generic) -- shelved; the
+filter-gating rule stands: no auto-filter touches the rating queue until
+it passes known-answer pairs AND agrees with banked user comparisons.
+
 ## Back pocket: preference-based training (researched 2026-07-10, not implemented)
 
 User-proposed direction: they can quickly judge if a generation is "on the
