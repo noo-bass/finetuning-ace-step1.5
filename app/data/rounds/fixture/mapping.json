@@ -1,0 +1,32 @@
+{
+  "seed": 1234,
+  "clips": {
+    "c01": {
+      "id": "base_alesis_s42",
+      "path": "/fake/generations/base_alesis_s42.wav",
+      "config": {
+        "model": "base",
+        "prompt_style": "alesis",
+        "seed": 42
+      }
+    },
+    "c02": {
+      "id": "lora8_warm_s07",
+      "path": "/fake/generations/lora8_warm_s07.wav",
+      "config": {
+        "model": "lora_rank8",
+        "prompt_style": "warm",
+        "seed": 7
+      }
+    },
+    "c03": {
+      "id": "lora16_tape_s13",
+      "path": "/fake/generations/lora16_tape_s13.wav",
+      "config": {
+        "model": "lora_rank16",
+        "prompt_style": "tape",
+        "seed": 13
+      }
+    }
+  }
+}
