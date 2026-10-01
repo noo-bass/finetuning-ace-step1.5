@@ -17,3 +17,11 @@ __pycache__/
 *.pyc
 .venv/
 .cache/
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+service-account*.json
+*credentials*.json
